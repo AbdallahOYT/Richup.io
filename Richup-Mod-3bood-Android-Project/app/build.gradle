@@ -1,0 +1,16 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'io.richup.wrapper'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'io.richup.wrapper'
+        minSdk 23
+        targetSdk 35
+        versionCode 2
+        versionName '1.1'
+    }
+}
