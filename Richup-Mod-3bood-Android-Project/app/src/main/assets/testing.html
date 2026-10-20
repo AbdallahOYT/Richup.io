@@ -1,1 +1,137 @@
 
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#151D20">
+  <title>Richup by Bodz — Test Mode</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 24px 16px;
+      background: #111719;
+      color: #f3f7f5;
+      font-family: Arial, sans-serif;
+    }
+    .container { max-width: 620px; margin: auto; }
+    .header { display: flex; align-items: center; gap: 12px; }
+    .logo {
+      width: 48px; height: 48px; border-radius: 14px;
+      display: grid; place-items: center;
+      background: #19d9a0; color: #10231e;
+      font-size: 24px; font-weight: bold;
+    }
+    h1 { font-size: 22px; margin: 0 0 5px; }
+    .muted { color: #9aaba7; font-size: 13px; }
+    .panel {
+      margin-top: 24px; padding: 20px;
+      border: 1px solid #34413e; border-radius: 18px;
+      background: #192120;
+    }
+    .balance { color: #19d9a0; font-size: 30px; font-weight: bold; }
+    .boards {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px; margin-top: 16px;
+    }
+    .board {
+      text-align: left; padding: 16px; min-height: 120px;
+      border: 1px solid #3b514a; border-radius: 14px;
+      background: #23312d; color: white; cursor: pointer;
+    }
+    .board.selected { border: 2px solid #19d9a0; }
+    .board strong { display: block; margin: 8px 0; font-size: 16px; }
+    .board span { color: #a8bbb4; font-size: 12px; }
+    button:focus-visible { outline: 2px solid #19d9a0; }
+    .action {
+      width: 100%; padding: 14px; margin-top: 18px;
+      border: 0; border-radius: 12px; background: #19d9a0;
+      color: #10231e; font-size: 15px; font-weight: bold;
+      cursor: pointer;
+    }
+    .secondary { background: #303d39; color: white; }
+    #status { min-height: 20px; margin-top: 14px; color: #19d9a0; }
+    .notice {
+      margin-top: 16px; color: #a8bbb4;
+      font-size: 12px; line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <header class="header">
+      <div class="logo">3B</div>
+      <div>
+        <h1>Richup by Bodz</h1>
+        <div class="muted">Local testing playground</div>
+      </div>
+    </header>
+
+    <section class="panel">
+      <div class="muted">DEMO COINS — NOT REAL RICHUP COINS</div>
+      <div class="balance" id="coins">∞</div>
+      <div class="muted">No purchases required in this demo.</div>
+    </section>
+
+    <section class="panel">
+      <h2 style="margin-top:0">Choose a board</h2>
+      <div class="muted">Select a sample board to test this interface.</div>
+
+      <div class="boards">
+        <button class="board selected" data-board="Classic">
+          🏠 <strong>Classic</strong><span>Sample board</span>
+        </button>
+        <button class="board" data-board="Mr. Worldwide">
+          🌍 <strong>Mr. Worldwide</strong><span>Demo selection only</span>
+        </button>
+        <button class="board" data-board="Lucky Wheel">
+          🎡 <strong>Lucky Wheel</strong><span>Sample board</span>
+        </button>
+        <button class="board" data-board="Death Valley">
+          🏜️ <strong>Death Valley</strong><span>Sample board</span>
+        </button>
+      </div>
+
+      <button class="action" id="select">Select board</button>
+      <button class="action secondary" id="reset">Reset demo</button>
+      <div id="status" role="status">Selected: Classic</div>
+    </section>
+
+    <p class="notice">
+      This is a standalone demo interface. The board names are examples;
+      this page does not contain the official maps or connect to online
+      Richup matches. Selecting a board here does not unlock it on Richup.
+    </p>
+  </main>
+
+  <script>
+    let selected = "Classic";
+
+    document.querySelectorAll(".board").forEach(button => {
+      button.addEventListener("click", () => {
+        selected = button.dataset.board;
+        document.querySelectorAll(".board").forEach(item => {
+          item.classList.toggle("selected", item === button);
+        });
+        document.getElementById("status").textContent =
+          "Selected: " + selected;
+      });
+    });
+
+    document.getElementById("select").addEventListener("click", () => {
+      document.getElementById("status").textContent =
+        selected + " selected in demo mode.";
+    });
+
+    document.getElementById("reset").addEventListener("click", () => {
+      selected = "Classic";
+      document.querySelectorAll(".board").forEach(button => {
+        button.classList.toggle("selected", button.dataset.board === selected);
+      });
+      document.getElementById("status").textContent = "Demo reset.";
+    });
+  </script>
+</body>
+</html>
