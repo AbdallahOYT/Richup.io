@@ -34,6 +34,79 @@ public class MainActivity extends Activity {
 
     private TextView autoButton;
 
+private void installAutoModeScript() {
+    String script =
+        "(function() {" +
+        "  if (window.__richupAutoInstalled) return;" +
+        "  window.__richupAutoInstalled = true;" +
+        "  window.__richupAutoTimer = null;" +
+        "  window.__richupAutoState = 'roll';" +
+        "  window.__richupAutoLastAction = 0;" +
+
+        "  window.richupAutoSetMode = function(enabled) {" +
+        "    if (window.__richupAutoTimer) {" +
+        "      clearInterval(window.__richupAutoTimer);" +
+        "      window.__richupAutoTimer = null;" +
+        "    }" +
+        "    window.__richupAutoState = 'roll';" +
+        "    if (!enabled) return;" +
+
+        "    window.__richupAutoTimer = setInterval(function() {" +
+        "      var buttons = Array.from(document.querySelectorAll('button'));" +
+        "      var findButton = function(label) {" +
+        "        return buttons.find(function(b) {" +
+        "          return !b.disabled &&" +
+        "            (b.innerText || b.textContent || '').trim() === label &&" +
+        "            b.getClientRects().length > 0;" +
+        "        });" +
+        "      };" +
+        "      var now = Date.now();" +
+
+        "      if (window.__richupAutoState === 'roll') {" +
+        "        var roll = findButton('Roll the dice');" +
+        "        if (roll) {" +
+        "          roll.click();" +
+        "          window.__richupAutoState = 'end';" +
+        "          window.__richupAutoLastAction = now;" +
+        "        }" +
+        "      } else if (" +
+        "        window.__richupAutoState === 'end' &&" +
+        "        now - window.__richupAutoLastAction >= 2200" +
+        "      ) {" +
+        "        var end = findButton('End turn');" +
+        "        if (end) {" +
+        "          end.click();" +
+        "          window.__richupAutoState = 'roll';" +
+        "          window.__richupAutoLastAction = now;" +
+        "        }" +
+        "      }" +
+        "    }, 500);" +
+        "  };" +
+        "})();";
+
+    if (webView != null) {
+        webView.evaluateJavascript(script, value -> {
+            if (webView != null) {
+                webView.evaluateJavascript(
+                    "if (window.richupAutoSetMode) " +
+                    "window.richupAutoSetMode(" + autoMode + ");",
+                    null
+                );
+            }
+        });
+    }
+}
+
+private void setAutoModeInPage() {
+    if (webView != null) {
+        webView.evaluateJavascript(
+            "if (window.richupAutoSetMode) " +
+            "window.richupAutoSetMode(" + autoMode + ");",
+            null
+        );
+    }
+}
+
     private static final String HOME_URL = "https://richup.io/";
     private static final String TEST_URL =
             "https://appassets.androidplatform.net/assets/testing.html";
@@ -122,25 +195,31 @@ public class MainActivity extends Activity {
             webView.loadUrl(TEST_URL);
         });
 
-        autoButton.setOnClickListener(v -> {
-            autoMode = !autoMode;
+  
+autoButton.setOnClickListener(v -> {
+    autoMode = !autoMode;
 
-            if (autoMode) {
-                autoButton.setText("▶ Auto: ON");
-                Toast.makeText(
-                        MainActivity.this,
-                        "Auto Mode enabled — gameplay is not automated",
-                        Toast.LENGTH_SHORT
-                ).show();
-            } else {
-                autoButton.setText("▶ Auto: OFF");
-                Toast.makeText(
-                        MainActivity.this,
-                        "Auto Mode stopped",
-                        Toast.LENGTH_SHORT
-                ).show();
-            }
-        });
+    if (autoMode) {
+        autoButton.setText("▶ Auto: ON");
+        installAutoModeScript();
+
+        Toast.makeText(
+            MainActivity.this,
+            "Auto Mode enabled",
+            Toast.LENGTH_SHORT
+        ).show();
+    } else {
+        autoButton.setText("▶ Auto: OFF");
+        setAutoModeInPage();
+
+        Toast.makeText(
+            MainActivity.this,
+            "Auto Mode stopped",
+            Toast.LENGTH_SHORT
+        ).show();
+    }
+});
+
 
         controls.addView(home);
         controls.addView(reload);
@@ -208,7 +287,14 @@ public class MainActivity extends Activity {
                     WebView view, String url) {
                 return routeUrl(Uri.parse(url));
             }
+@Override
+public void onPageFinished(WebView view, String url) {
+    super.onPageFinished(view, url);
 
+    if (url != null && url.startsWith("https://richup.io")) {
+        installAutoModeScript();
+    }
+}
             private boolean routeUrl(Uri uri) {
                 String scheme = uri.getScheme();
                 String host = uri.getHost();
@@ -254,13 +340,16 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void stopAutoMode() {
-        autoMode = false;
 
-        if (autoButton != null) {
-            autoButton.setText("▶ Auto: OFF");
-        }
+private void stopAutoMode() {
+    autoMode = false;
+
+    if (autoButton != null) {
+        autoButton.setText("▶ Auto: OFF");
     }
+
+    setAutoModeInPage();
+}
 
     private TextView makeButton(String label) {
         TextView button = new TextView(this);
