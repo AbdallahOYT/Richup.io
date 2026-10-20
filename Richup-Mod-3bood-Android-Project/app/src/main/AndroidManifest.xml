@@ -7,7 +7,7 @@
         android:hardwareAccelerated="true"
         android:allowBackup="false"
         android:supportsRtl="true"
-        android:icon="@drawable/ic_richup_launcher">
+       android:icon="@drawable/richup_icon"
         <activity
             android:name=".MainActivity"
             android:exported="true"
