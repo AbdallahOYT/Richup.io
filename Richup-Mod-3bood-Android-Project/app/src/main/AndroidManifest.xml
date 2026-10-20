@@ -1,5 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
     <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:label="Richup by Bodz"
@@ -7,17 +9,21 @@
         android:hardwareAccelerated="true"
         android:allowBackup="false"
         android:supportsRtl="true"
-       android:icon="@drawable/richup_icon"
+        android:icon="@drawable/richup_icon">
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:screenOrientation="unspecified"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:windowSoftInputMode="adjustResize">
+
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
         </activity>
     </application>
+
 </manifest>
