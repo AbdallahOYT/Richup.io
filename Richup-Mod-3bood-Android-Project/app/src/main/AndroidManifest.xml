@@ -2,7 +2,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <application
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
-        android:label="Richup Mod (3bood)"
+        android:label="Richup by Bodz"
         android:usesCleartextTraffic="false"
         android:hardwareAccelerated="true"
         android:allowBackup="false"
