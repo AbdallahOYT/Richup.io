@@ -12,6 +12,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 import android.webkit.CookieManager;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -26,8 +27,12 @@ import androidx.webkit.WebViewAssetLoader;
 public class MainActivity extends Activity {
     private WebView webView;
     private FrameLayout root;
+
     private boolean keepAwake = true;
     private boolean testingMode = false;
+    private boolean autoMode = false;
+
+    private TextView autoButton;
 
     private static final String HOME_URL = "https://richup.io/";
     private static final String TEST_URL =
@@ -53,6 +58,7 @@ public class MainActivity extends Activity {
         applyImmersiveMode();
 
         root = new FrameLayout(this);
+
         webView = new WebView(this);
         webView.setBackgroundColor(Color.rgb(15, 18, 20));
         webView.setFocusable(true);
@@ -81,16 +87,22 @@ public class MainActivity extends Activity {
         TextView reload = makeButton("↻ Reload");
         TextView awake = makeButton("☾ Awake: ON");
         TextView testing = makeButton("⚙ Testing");
+        autoButton = makeButton("▶ Auto: OFF");
 
         home.setOnClickListener(v -> {
             testingMode = false;
+            stopAutoMode();
             webView.loadUrl(HOME_URL);
         });
 
-        reload.setOnClickListener(v -> webView.reload());
+        reload.setOnClickListener(v -> {
+            stopAutoMode();
+            webView.reload();
+        });
 
         awake.setOnClickListener(v -> {
             keepAwake = !keepAwake;
+
             if (keepAwake) {
                 getWindow().addFlags(
                         WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
@@ -106,13 +118,35 @@ public class MainActivity extends Activity {
 
         testing.setOnClickListener(v -> {
             testingMode = true;
+            stopAutoMode();
             webView.loadUrl(TEST_URL);
+        });
+
+        autoButton.setOnClickListener(v -> {
+            autoMode = !autoMode;
+
+            if (autoMode) {
+                autoButton.setText("▶ Auto: ON");
+                Toast.makeText(
+                        MainActivity.this,
+                        "Auto Mode enabled — gameplay is not automated",
+                        Toast.LENGTH_SHORT
+                ).show();
+            } else {
+                autoButton.setText("▶ Auto: OFF");
+                Toast.makeText(
+                        MainActivity.this,
+                        "Auto Mode stopped",
+                        Toast.LENGTH_SHORT
+                ).show();
+            }
         });
 
         controls.addView(home);
         controls.addView(reload);
         controls.addView(awake);
         controls.addView(testing);
+        controls.addView(autoButton);
 
         FrameLayout.LayoutParams controlsParams =
                 new FrameLayout.LayoutParams(
@@ -120,6 +154,7 @@ public class MainActivity extends Activity {
                         FrameLayout.LayoutParams.WRAP_CONTENT,
                         Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL
                 );
+
         controlsParams.bottomMargin = dp(12);
         root.addView(controls, controlsParams);
 
@@ -198,6 +233,7 @@ public class MainActivity extends Activity {
                                 Intent.ACTION_VIEW, uri
                         ));
                     } catch (Exception ignored) {
+                        // No compatible browser is available.
                     }
                 }
 
@@ -211,9 +247,18 @@ public class MainActivity extends Activity {
             testingMode = savedInstanceState.getBoolean(
                     "testingMode", false
             );
+
             if (webView.restoreState(savedInstanceState) == null) {
                 webView.loadUrl(testingMode ? TEST_URL : HOME_URL);
             }
+        }
+    }
+
+    private void stopAutoMode() {
+        autoMode = false;
+
+        if (autoButton != null) {
+            autoButton.setText("▶ Auto: OFF");
         }
     }
 
@@ -250,12 +295,16 @@ public class MainActivity extends Activity {
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        if (hasFocus) applyImmersiveMode();
+
+        if (hasFocus) {
+            applyImmersiveMode();
+        }
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+
         if (webView != null) {
             webView.onResume();
             webView.resumeTimers();
@@ -264,10 +313,13 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onPause() {
+        stopAutoMode();
+
         if (webView != null) {
             webView.onPause();
             webView.pauseTimers();
         }
+
         super.onPause();
     }
 
@@ -277,8 +329,10 @@ public class MainActivity extends Activity {
             webView.goBack();
         } else if (testingMode) {
             testingMode = false;
+            stopAutoMode();
             webView.loadUrl(HOME_URL);
         } else {
+            stopAutoMode();
             super.onBackPressed();
         }
     }
@@ -286,7 +340,11 @@ public class MainActivity extends Activity {
     @Override
     protected void onSaveInstanceState(Bundle outState) {
         outState.putBoolean("testingMode", testingMode);
-        if (webView != null) webView.saveState(outState);
+
+        if (webView != null) {
+            webView.saveState(outState);
+        }
+
         super.onSaveInstanceState(outState);
     }
 
@@ -300,6 +358,7 @@ public class MainActivity extends Activity {
             webView.destroy();
             webView = null;
         }
+
         super.onDestroy();
     }
 }
