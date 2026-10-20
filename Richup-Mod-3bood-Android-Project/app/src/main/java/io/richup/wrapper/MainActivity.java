@@ -1,3 +1,4 @@
+
 package io.richup.wrapper;
 
 import android.app.Activity;
@@ -20,12 +21,19 @@ import android.webkit.WebViewClient;
 import android.net.Uri;
 import android.content.Intent;
 
+import androidx.webkit.WebViewAssetLoader;
+
 public class MainActivity extends Activity {
     private WebView webView;
     private FrameLayout root;
     private boolean keepAwake = true;
+    private boolean testingMode = false;
 
     private static final String HOME_URL = "https://richup.io/";
+    private static final String TEST_URL =
+            "https://appassets.androidplatform.net/assets/testing.html";
+
+    private WebViewAssetLoader assetLoader;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -35,15 +43,18 @@ public class MainActivity extends Activity {
                 WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
         );
 
+        assetLoader = new WebViewAssetLoader.Builder()
+                .addPathHandler(
+                        "/assets/",
+                        new WebViewAssetLoader.AssetsPathHandler(this)
+                )
+                .build();
+
         applyImmersiveMode();
 
         root = new FrameLayout(this);
-
         webView = new WebView(this);
         webView.setBackgroundColor(Color.rgb(15, 18, 20));
-
-        // WebView uses hardware acceleration by default.
-        // Avoid forcing an additional hardware rendering layer.
         webView.setFocusable(true);
         webView.setFocusableInTouchMode(true);
         webView.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
@@ -58,7 +69,7 @@ public class MainActivity extends Activity {
         LinearLayout controls = new LinearLayout(this);
         controls.setOrientation(LinearLayout.HORIZONTAL);
         controls.setGravity(Gravity.CENTER);
-        controls.setPadding(dp(8), dp(5), dp(8), dp(5));
+        controls.setPadding(dp(5), dp(5), dp(5), dp(5));
 
         GradientDrawable panel = new GradientDrawable();
         panel.setColor(0xD91B2422);
@@ -66,41 +77,42 @@ public class MainActivity extends Activity {
         panel.setStroke(dp(1), 0xFF16D99A);
         controls.setBackground(panel);
 
-        TextView home = makeButton("⌂  Home");
-        TextView reload = makeButton("↻  Reload");
-        TextView awake = makeButton("☾  Awake: ON");
+        TextView home = makeButton("⌂ Home");
+        TextView reload = makeButton("↻ Reload");
+        TextView awake = makeButton("☾ Awake: ON");
+        TextView testing = makeButton("⚙ Testing");
 
         home.setOnClickListener(v -> {
-            if (webView != null) {
-                webView.loadUrl(HOME_URL);
-            }
+            testingMode = false;
+            webView.loadUrl(HOME_URL);
         });
 
-        reload.setOnClickListener(v -> {
-            if (webView != null) {
-                webView.reload();
-            }
-        });
+        reload.setOnClickListener(v -> webView.reload());
 
         awake.setOnClickListener(v -> {
             keepAwake = !keepAwake;
-
             if (keepAwake) {
                 getWindow().addFlags(
                         WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
                 );
-                awake.setText("☾  Awake: ON");
+                awake.setText("☾ Awake: ON");
             } else {
                 getWindow().clearFlags(
                         WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
                 );
-                awake.setText("☾  Awake: OFF");
+                awake.setText("☾ Awake: OFF");
             }
+        });
+
+        testing.setOnClickListener(v -> {
+            testingMode = true;
+            webView.loadUrl(TEST_URL);
         });
 
         controls.addView(home);
         controls.addView(reload);
         controls.addView(awake);
+        controls.addView(testing);
 
         FrameLayout.LayoutParams controlsParams =
                 new FrameLayout.LayoutParams(
@@ -108,7 +120,6 @@ public class MainActivity extends Activity {
                         FrameLayout.LayoutParams.WRAP_CONTENT,
                         Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL
                 );
-
         controlsParams.bottomMargin = dp(12);
         root.addView(controls, controlsParams);
 
@@ -121,31 +132,20 @@ public class MainActivity extends Activity {
         }
 
         WebSettings settings = webView.getSettings();
-
-        // Required for Richup's interactive game.
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
-
-        // Keep media, cookies, and website storage working.
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setLoadsImagesAutomatically(true);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
-
-        // Avoid unwanted zoom controls.
         settings.setSupportZoom(false);
         settings.setBuiltInZoomControls(false);
         settings.setDisplayZoomControls(false);
-
-        // Restrict local-file access.
         settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(false);
-
-        // Keep secure HTTPS content restrictions.
         settings.setMixedContentMode(
                 WebSettings.MIXED_CONTENT_NEVER_ALLOW
         );
-
         settings.setDefaultTextEncodingName("UTF-8");
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
 
@@ -157,18 +157,20 @@ public class MainActivity extends Activity {
 
         webView.setWebViewClient(new WebViewClient() {
             @Override
+            public android.webkit.WebResourceResponse shouldInterceptRequest(
+                    WebView view, WebResourceRequest request) {
+                return assetLoader.shouldInterceptRequest(request.getUrl());
+            }
+
+            @Override
             public boolean shouldOverrideUrlLoading(
-                    WebView view,
-                    WebResourceRequest request
-            ) {
+                    WebView view, WebResourceRequest request) {
                 return routeUrl(request.getUrl());
             }
 
             @Override
             public boolean shouldOverrideUrlLoading(
-                    WebView view,
-                    String url
-            ) {
+                    WebView view, String url) {
                 return routeUrl(Uri.parse(url));
             }
 
@@ -180,10 +182,15 @@ public class MainActivity extends Activity {
                         && host != null
                         && (host.equals("richup.io")
                         || host.endsWith(".richup.io"))) {
+                    testingMode = false;
                     return false;
                 }
 
-                // Open external web links in the browser.
+                if ("https".equalsIgnoreCase(scheme)
+                        && "appassets.androidplatform.net".equals(host)) {
+                    return false;
+                }
+
                 if ("https".equalsIgnoreCase(scheme)
                         || "http".equalsIgnoreCase(scheme)) {
                     try {
@@ -191,7 +198,6 @@ public class MainActivity extends Activity {
                                 Intent.ACTION_VIEW, uri
                         ));
                     } catch (Exception ignored) {
-                        // No browser available.
                     }
                 }
 
@@ -201,8 +207,13 @@ public class MainActivity extends Activity {
 
         if (savedInstanceState == null) {
             webView.loadUrl(HOME_URL);
-        } else if (webView.restoreState(savedInstanceState) == null) {
-            webView.loadUrl(HOME_URL);
+        } else {
+            testingMode = savedInstanceState.getBoolean(
+                    "testingMode", false
+            );
+            if (webView.restoreState(savedInstanceState) == null) {
+                webView.loadUrl(testingMode ? TEST_URL : HOME_URL);
+            }
         }
     }
 
@@ -210,10 +221,10 @@ public class MainActivity extends Activity {
         TextView button = new TextView(this);
         button.setText(label);
         button.setTextColor(Color.WHITE);
-        button.setTextSize(12);
+        button.setTextSize(11);
         button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         button.setGravity(Gravity.CENTER);
-        button.setPadding(dp(10), dp(8), dp(10), dp(8));
+        button.setPadding(dp(8), dp(8), dp(8), dp(8));
         button.setClickable(true);
         button.setFocusable(true);
         return button;
@@ -239,16 +250,12 @@ public class MainActivity extends Activity {
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-
-        if (hasFocus) {
-            applyImmersiveMode();
-        }
+        if (hasFocus) applyImmersiveMode();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-
         if (webView != null) {
             webView.onResume();
             webView.resumeTimers();
@@ -261,7 +268,6 @@ public class MainActivity extends Activity {
             webView.onPause();
             webView.pauseTimers();
         }
-
         super.onPause();
     }
 
@@ -269,6 +275,9 @@ public class MainActivity extends Activity {
     public void onBackPressed() {
         if (webView != null && webView.canGoBack()) {
             webView.goBack();
+        } else if (testingMode) {
+            testingMode = false;
+            webView.loadUrl(HOME_URL);
         } else {
             super.onBackPressed();
         }
@@ -276,10 +285,8 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onSaveInstanceState(Bundle outState) {
-        if (webView != null) {
-            webView.saveState(outState);
-        }
-
+        outState.putBoolean("testingMode", testingMode);
+        if (webView != null) webView.saveState(outState);
         super.onSaveInstanceState(outState);
     }
 
@@ -293,7 +300,6 @@ public class MainActivity extends Activity {
             webView.destroy();
             webView = null;
         }
-
         super.onDestroy();
     }
 }
