@@ -209,27 +209,28 @@ public class MainActivity extends Activity {
                     installAutoModeScript();
                 }
             }
-            private boolean routeUrl(Uri uri) {
-                String scheme = uri.getScheme();
-                String host = uri.getHost();
-                if ("https".equalsIgnoreCase(scheme) && host != null &&
-                    (host.equals("richup.io") || host.endsWith(".richup.io"))) {
-                    return false;
-                }
-                if ("https".equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme)) {
-                    try {
-                        CustomTabsIntent customTab = new CustomTabsIntent.Builder()
-                            .setToolbarColor(PURPLE_DARK)
-                            .setShowTitle(true)
-                            .build();
-                        customTab.launchUrl(MainActivity.this, uri);
-                    } catch (Exception customTabError) {
-                        try { startActivity(new Intent(Intent.ACTION_VIEW, uri)); }
-                        catch (Exception ignored) { }
-                    }
-                }
-                return true;
-            }
+    
+private boolean routeUrl(Uri uri) {
+    String scheme = uri.getScheme();
+    String host = uri.getHost();
+
+    // Keep Richup pages inside the app.
+    if ("https".equalsIgnoreCase(scheme) && host != null &&
+        (host.equals("richup.io") || host.endsWith(".richup.io"))) {
+        return false;
+    }
+
+    // Keep HTTP/HTTPS navigation inside the same WebView.
+    // This prevents login pages from opening in a separate browser tab.
+    if ("https".equalsIgnoreCase(scheme) ||
+        "http".equalsIgnoreCase(scheme)) {
+        webView.loadUrl(uri.toString());
+        return true;
+    }
+
+    return true;
+}
+
         });
 
         if (savedInstanceState == null) {
