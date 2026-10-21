@@ -28,6 +28,8 @@ import android.net.Uri;
 import android.content.Intent;
 import android.text.InputType;
 
+import androidx.browser.customtabs.CustomTabsIntent;
+
 
 public class MainActivity extends Activity {
     private static final int PURPLE = Color.rgb(139, 92, 246);
@@ -215,8 +217,16 @@ public class MainActivity extends Activity {
                     return false;
                 }
                 if ("https".equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme)) {
-                    try { startActivity(new Intent(Intent.ACTION_VIEW, uri)); }
-                    catch (Exception ignored) { }
+                    try {
+                        CustomTabsIntent customTab = new CustomTabsIntent.Builder()
+                            .setToolbarColor(PURPLE_DARK)
+                            .setShowTitle(true)
+                            .build();
+                        customTab.launchUrl(MainActivity.this, uri);
+                    } catch (Exception customTabError) {
+                        try { startActivity(new Intent(Intent.ACTION_VIEW, uri)); }
+                        catch (Exception ignored) { }
+                    }
                 }
                 return true;
             }
@@ -310,11 +320,11 @@ public class MainActivity extends Activity {
 
         EditText linkInput = new EditText(this);
         linkInput.setSingleLine(true);
-        linkInput.setHint("https://richup.io/room/s54jb");
+        linkInput.setHint("Enter room code (e.g. xd9a3)");
         linkInput.setHintTextColor(0xFF9B95A8);
         linkInput.setTextColor(Color.WHITE);
         linkInput.setTextSize(14);
-        linkInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        linkInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
         linkInput.setSelectAllOnFocus(true);
         GradientDrawable inputBg = new GradientDrawable();
         inputBg.setColor(0xFF242033);
@@ -333,18 +343,14 @@ public class MainActivity extends Activity {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(PURPLE_PALE);
             dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(PURPLE_PALE);
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-                String raw = linkInput.getText().toString().trim();
-                Uri uri = Uri.parse(raw);
-                String host = uri.getHost();
-                boolean valid = "https".equalsIgnoreCase(uri.getScheme()) && host != null &&
-                    (host.equalsIgnoreCase("richup.io") || host.equalsIgnoreCase("www.richup.io")) &&
-                    uri.getPath() != null && uri.getPath().startsWith("/room/") && uri.getPath().length() > 6;
-                if (!valid) {
-                    linkInput.setError("Paste a valid https://richup.io/room/... link");
+                String code = linkInput.getText().toString().trim();
+                if (!code.matches("[A-Za-z0-9]+")) {
+                    linkInput.setError("Enter the room code only (letters and numbers)");
                     return;
                 }
+                String roomUrl = "https://richup.io/room/" + code;
                 stopAutoMode();
-                webView.loadUrl(uri.toString());
+                webView.loadUrl(roomUrl);
                 dialog.dismiss();
             });
         });
