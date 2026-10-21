@@ -28,7 +28,6 @@ import android.net.Uri;
 import android.content.Intent;
 import android.text.InputType;
 
-import androidx.webkit.WebViewAssetLoader;
 
 public class MainActivity extends Activity {
     private static final int PURPLE = Color.rgb(139, 92, 246);
@@ -36,13 +35,10 @@ public class MainActivity extends Activity {
     private static final int PURPLE_PALE = Color.rgb(196, 181, 253);
     private static final int DARK = Color.rgb(23, 21, 31);
     private static final String HOME_URL = "https://richup.io/";
-    private static final String TEST_URL = "https://appassets.androidplatform.net/assets/testing.html";
 
     private WebView webView;
     private FrameLayout root;
-    private WebViewAssetLoader assetLoader;
     private boolean keepAwake = true;
-    private boolean testingMode = false;
     private boolean autoMode = false;
     private boolean autoBuy = false;
     private TextView autoButton;
@@ -102,10 +98,6 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED);
 
-        assetLoader = new WebViewAssetLoader.Builder()
-            .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this))
-            .build();
-
         applyImmersiveMode();
         root = new FrameLayout(this);
         webView = new WebView(this);
@@ -131,12 +123,10 @@ public class MainActivity extends Activity {
         TextView home = makeButton("⌂ Home");
         TextView reload = makeButton("↻ Reload");
         TextView awake = makeButton("☾ Awake: ON");
-        TextView testing = makeButton("⚙ Testing");
         autoButton = makeButton("▶ Auto Play");
         TextView joinButton = makeButton("↗ Join Room");
 
         home.setOnClickListener(v -> {
-            testingMode = false;
             stopAutoMode();
             webView.loadUrl(HOME_URL);
         });
@@ -154,18 +144,12 @@ public class MainActivity extends Activity {
                 awake.setText("☾ Awake: OFF");
             }
         });
-        testing.setOnClickListener(v -> {
-            testingMode = true;
-            stopAutoMode();
-            webView.loadUrl(TEST_URL);
-        });
         autoButton.setOnClickListener(v -> showAutoSettings());
         joinButton.setOnClickListener(v -> showJoinRoomDialog());
 
         controls.addView(home);
         controls.addView(reload);
         controls.addView(awake);
-        controls.addView(testing);
         controls.addView(autoButton);
         controls.addView(joinButton);
 
@@ -209,10 +193,6 @@ public class MainActivity extends Activity {
         webView.setWebChromeClient(new WebChromeClient());
         webView.setWebViewClient(new WebViewClient() {
             @Override
-            public android.webkit.WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-                return assetLoader.shouldInterceptRequest(request.getUrl());
-            }
-            @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 return routeUrl(request.getUrl());
             }
@@ -232,10 +212,8 @@ public class MainActivity extends Activity {
                 String host = uri.getHost();
                 if ("https".equalsIgnoreCase(scheme) && host != null &&
                     (host.equals("richup.io") || host.endsWith(".richup.io"))) {
-                    testingMode = false;
                     return false;
                 }
-                if ("https".equalsIgnoreCase(scheme) && "appassets.androidplatform.net".equals(host)) return false;
                 if ("https".equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme)) {
                     try { startActivity(new Intent(Intent.ACTION_VIEW, uri)); }
                     catch (Exception ignored) { }
@@ -247,8 +225,7 @@ public class MainActivity extends Activity {
         if (savedInstanceState == null) {
             webView.loadUrl(HOME_URL);
         } else {
-            testingMode = savedInstanceState.getBoolean("testingMode", false);
-            if (webView.restoreState(savedInstanceState) == null) webView.loadUrl(testingMode ? TEST_URL : HOME_URL);
+            if (webView.restoreState(savedInstanceState) == null) webView.loadUrl(HOME_URL);
         }
     }
 
@@ -274,12 +251,20 @@ public class MainActivity extends Activity {
         playCheck.setChecked(autoMode);
         layout.addView(playCheck);
 
+        TextView playDescription = makeDescription(
+            "Automatically rolls the dice, takes Roll Again when available, and ends the turn when no extra roll remains.");
+        layout.addView(playDescription);
+
         CheckBox buyCheck = new CheckBox(this);
         buyCheck.setText("Auto Buy");
         buyCheck.setTextColor(Color.WHITE);
         buyCheck.setButtonTintList(ColorStateList.valueOf(PURPLE));
         buyCheck.setChecked(autoBuy);
         layout.addView(buyCheck);
+
+        TextView buyDescription = makeDescription(
+            "Buys available properties when enabled and affordable; skips purchases the game does not allow.");
+        layout.addView(buyDescription);
 
         TextView footer = new TextView(this);
         footer.setText("edited by abood");
@@ -359,7 +344,6 @@ public class MainActivity extends Activity {
                     return;
                 }
                 stopAutoMode();
-                testingMode = false;
                 webView.loadUrl(uri.toString());
                 dialog.dismiss();
             });
@@ -376,6 +360,15 @@ public class MainActivity extends Activity {
         autoMode = false;
         updateAutoButtonLabel();
         setAutoModeInPage();
+    }
+
+    private TextView makeDescription(String text) {
+        TextView description = new TextView(this);
+        description.setText(text);
+        description.setTextColor(0xFFB9B3C9);
+        description.setTextSize(12);
+        description.setPadding(dp(36), 0, dp(4), dp(10));
+        return description;
     }
 
     private TextView makeButton(String label) {
@@ -431,13 +424,11 @@ public class MainActivity extends Activity {
     @Override
     public void onBackPressed() {
         if (webView != null && webView.canGoBack()) webView.goBack();
-        else if (testingMode) { testingMode = false; stopAutoMode(); webView.loadUrl(HOME_URL); }
         else { stopAutoMode(); super.onBackPressed(); }
     }
 
     @Override
     protected void onSaveInstanceState(Bundle outState) {
-        outState.putBoolean("testingMode", testingMode);
         if (webView != null) webView.saveState(outState);
         super.onSaveInstanceState(outState);
     }
