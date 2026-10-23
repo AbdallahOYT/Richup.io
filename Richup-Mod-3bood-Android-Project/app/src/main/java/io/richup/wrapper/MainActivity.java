@@ -1,644 +1,799 @@
+
 package io.richup.wrapper;
 
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.os.Bundle;
-import android.view.View;
-import android.view.Gravity;
-import android.view.WindowManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
-import android.graphics.drawable.RippleDrawable;
-import android.content.res.ColorStateList;
 import android.content.SharedPreferences;
-import android.widget.FrameLayout;
-import android.widget.HorizontalScrollView;
-import android.widget.LinearLayout;
-import android.widget.TextView;
-import android.widget.EditText;
-import android.widget.CheckBox;
-import android.widget.Toast;
-import android.webkit.CookieManager;
-import android.webkit.WebChromeClient;
-import android.webkit.WebResourceRequest;
+import android.content.res.ColorStateList;
+import android.net.Uri;
+import android.view.Gravity;
+import android.view.View;
+import android.view.WindowManager;
+import android.view.inputmethod.InputMethodManager;
+import android.content.Context;
+import android.text.InputType;
+import android.widget.*;
+
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-import android.net.Uri;
-import android.text.InputType;
+import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
+
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
 
 public class MainActivity extends Activity {
+
     private static final int PURPLE = Color.rgb(139, 92, 246);
-    private static final int PURPLE_DARK = Color.rgb(109, 40, 217);
-    private static final int PURPLE_PALE = Color.rgb(196, 181, 253);
+    private static final int PALE = Color.rgb(196, 181, 253);
     private static final int DARK = Color.rgb(23, 21, 31);
     private static final int CARD = Color.rgb(36, 32, 51);
-    private static final String HOME_URL = "https://richup.io/";
-    private static final String PREFS = "richup_mod_settings";
+    private static final String HOME = "https://richup.io/";
+    private static final int COUNT = 4;
 
-    private WebView webView;
-    private FrameLayout root;
-    private View controlPanel;
-    private TextView panelToggle;
-    private boolean panelExpanded = true;
-    private boolean keepAwake = true;
-    private boolean autoMode = false;
-    private boolean autoBuy = false;
-    private boolean fastMode = false;
-    private TextView autoButton;
-
-    private final String[] botNames = {"Bot 1", "Bot 2", "Bot 3"};
-    private final int[] botColors = {Color.RED, Color.BLUE, Color.GREEN};
-    private final boolean[] botEnabled = {false, false, false};
-    private final int[] availableBotColors = {
-        Color.RED, Color.BLUE, Color.GREEN, Color.YELLOW,
-        Color.MAGENTA, Color.CYAN, Color.WHITE,
-        Color.rgb(255, 128, 0), Color.rgb(255, 105, 180),
-        Color.rgb(139, 92, 246)
+    private final WebView[] players = new WebView[COUNT];
+    private final boolean[] autoPlay = new boolean[COUNT];
+    private final boolean[] autoBuy = new boolean[COUNT];
+    private final boolean[] fastMode = new boolean[COUNT];
+    private final String[] names = {
+        "Main", "Player 1", "Player 2", "Player 3"
+    };
+    private final int[] playerColors = {
+        Color.WHITE, Color.rgb(255, 90, 90),
+        Color.rgb(90, 160, 255), Color.rgb(90, 220, 130)
     };
 
+    private final int[] colorChoices = {
+        Color.rgb(255, 90, 90),
+        Color.rgb(90, 160, 255),
+        Color.rgb(90, 220, 130),
+        Color.YELLOW, Color.MAGENTA, Color.CYAN,
+        Color.WHITE, Color.rgb(255, 128, 0),
+        Color.rgb(255, 105, 180), PURPLE
+    };
+
+    private LinearLayout tabs;
+    private FrameLayout browserHost;
+    private View panel;
+    private TextView panelToggle;
+    private TextView autoButton;
+
+    private int selected = 0;
+    private boolean panelOpen = true;
+    private boolean keepAwake = true;
+    private boolean profilesSupported = false;
+    private SharedPreferences prefs;
+
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED);
-        applyImmersiveMode();
+    protected void onCreate(Bundle state) {
+        super.onCreate(state);
+
+        getWindow().addFlags(
+            WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
+        );
+
+        applyImmersive();
+        prefs = getSharedPreferences("richup_mod_settings", MODE_PRIVATE);
         loadPreferences();
 
-        root = new FrameLayout(this);
-        webView = new WebView(this);
-        webView.setBackgroundColor(Color.rgb(15, 18, 20));
-        webView.setFocusable(true);
-        webView.setFocusableInTouchMode(true);
-        webView.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
-        webView.setVerticalScrollBarEnabled(false);
-        webView.setHorizontalScrollBarEnabled(false);
-        root.addView(webView, new FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        profilesSupported = WebViewFeature.isFeatureSupported(
+            WebViewFeature.MULTI_PROFILE
+        );
 
-        // Rounded, compact control panel pinned to the right side.
-        LinearLayout panelLayout = new LinearLayout(this);
-        panelLayout.setOrientation(LinearLayout.VERTICAL);
-        panelLayout.setGravity(Gravity.CENTER_HORIZONTAL);
-        panelLayout.setPadding(dp(5), dp(5), dp(5), dp(5));
-        GradientDrawable panelBg = new GradientDrawable();
-        panelBg.setColor(0xE617151F);
-        panelBg.setCornerRadius(dp(22));
-        panelBg.setStroke(dp(1), PURPLE);
-        panelLayout.setBackground(panelBg);
+        if (keepAwake) {
+            getWindow().addFlags(
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+            );
+        }
 
-        TextView home = makeButton("⌂ Home");
-        TextView reload = makeButton("↻ Reload");
-        TextView awake = makeButton(keepAwake ? "☾ Awake ON" : "☾ Awake OFF");
-        autoButton = makeButton(autoMode ? "▶ Auto: ON" : "▶ Auto Play");
-        TextView joinButton = makeButton("↗ Join Room");
+        buildInterface();
 
-        home.setOnClickListener(v -> {
-            stopAutoMode();
-            webView.loadUrl(HOME_URL);
-        });
-        reload.setOnClickListener(v -> {
-            stopAutoMode();
-            webView.reload();
-        });
-        awake.setOnClickListener(v -> {
-            keepAwake = !keepAwake;
-            if (keepAwake) {
-                getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-                awake.setText("☾ Awake ON");
-            } else {
-                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-                awake.setText("☾ Awake OFF");
+        for (int i = 0; i < COUNT; i++) {
+            createPlayer(i);
+        }
+
+        selectPlayer(0);
+
+        if (!profilesSupported) {
+            new AlertDialog.Builder(this)
+                .setTitle("WebView profiles unavailable")
+                .setMessage(
+                    "Your installed Android System WebView does not " +
+                    "support multi-profile mode. The four tabs will work, " +
+                    "but their login cookies may be shared. Update Android " +
+                    "System WebView from Google Play and try again."
+                )
+                .setPositiveButton("OK", null)
+                .show();
+        }
+    }
+
+    private void buildInterface() {
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setBackgroundColor(DARK);
+
+        HorizontalScrollView tabScroll = new HorizontalScrollView(this);
+        tabScroll.setHorizontalScrollBarEnabled(false);
+        tabScroll.setFillViewport(false);
+        tabScroll.setBackgroundColor(DARK);
+
+        tabs = new LinearLayout(this);
+        tabs.setOrientation(LinearLayout.HORIZONTAL);
+        tabs.setPadding(dp(5), dp(5), dp(5), dp(5));
+
+        for (int i = 0; i < COUNT; i++) {
+            final int index = i;
+            TextView tab = button(names[i]);
+            tab.setTag("tab_" + i);
+            tab.setMinWidth(dp(88));
+            tab.setTextColor(playerColors[i]);
+            tab.setOnClickListener(v -> selectPlayer(index));
+
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                -2, -2
+            );
+            lp.setMargins(dp(3), 0, dp(3), 0);
+            tabs.addView(tab, lp);
+        }
+
+        tabScroll.addView(tabs);
+        page.addView(tabScroll, new LinearLayout.LayoutParams(-1, -2));
+
+        browserHost = new FrameLayout(this);
+        page.addView(browserHost, new LinearLayout.LayoutParams(
+            -1, 0, 1
+        ));
+
+        setContentView(page);
+    }
+
+    private void createPlayer(int index) {
+        WebView web = new WebView(this);
+        players[index] = web;
+
+        // This must happen before configuring or using the WebView.
+        if (profilesSupported) {
+            try {
+                WebViewCompat.setProfile(
+                    web, "richup_profile_" + index
+                );
+            } catch (Exception e) {
+                profilesSupported = false;
             }
-            savePreferences();
-        });
-        autoButton.setOnClickListener(v -> showAutoSettings());
-        joinButton.setOnClickListener(v -> showJoinRoomDialog());
+        }
 
-        panelLayout.addView(home);
-        panelLayout.addView(reload);
-        panelLayout.addView(awake);
-        panelLayout.addView(autoButton);
-        panelLayout.addView(joinButton);
+        web.setBackgroundColor(Color.rgb(15, 18, 20));
+        web.setFocusable(true);
+        web.setFocusableInTouchMode(true);
+        web.setVerticalScrollBarEnabled(false);
+        web.setHorizontalScrollBarEnabled(false);
 
-        HorizontalScrollView unusedScroller = new HorizontalScrollView(this);
-        unusedScroller.setVisibility(View.GONE);
+        WebSettings s = web.getSettings();
+        s.setJavaScriptEnabled(true);
+        s.setDomStorageEnabled(true);
+        s.setDatabaseEnabled(true);
+        s.setMediaPlaybackRequiresUserGesture(false);
+        s.setLoadsImagesAutomatically(true);
+        s.setCacheMode(WebSettings.LOAD_DEFAULT);
+        s.setSupportZoom(false);
+        s.setBuiltInZoomControls(false);
+        s.setDisplayZoomControls(false);
+        s.setAllowFileAccess(false);
+        s.setAllowContentAccess(false);
+        s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+        s.setDefaultTextEncodingName("UTF-8");
+        s.setJavaScriptCanOpenWindowsAutomatically(false);
 
-        controlPanel = panelLayout;
-        FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
-            Gravity.CENTER_VERTICAL | Gravity.RIGHT);
-        panelParams.rightMargin = dp(8);
-        root.addView(controlPanel, panelParams);
+        web.setWebChromeClient(new WebChromeClient());
 
-        panelToggle = makeButton("›");
-        panelToggle.setTextSize(18);
-        panelToggle.setMinWidth(dp(34));
-        panelToggle.setOnClickListener(v -> {
-            panelExpanded = !panelExpanded;
-            controlPanel.setVisibility(panelExpanded ? View.VISIBLE : View.GONE);
-            panelToggle.setText(panelExpanded ? "‹" : "›");
-        });
-        FrameLayout.LayoutParams toggleParams = new FrameLayout.LayoutParams(
-            dp(38), dp(48), Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-        toggleParams.rightMargin = panelExpanded ? dp(116) : dp(8);
-        root.addView(panelToggle, toggleParams);
-        setContentView(root);
-
-        if (keepAwake) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-
-        WebSettings settings = webView.getSettings();
-        settings.setJavaScriptEnabled(true);
-        settings.setDomStorageEnabled(true);
-        settings.setDatabaseEnabled(true);
-        settings.setMediaPlaybackRequiresUserGesture(false);
-        settings.setLoadsImagesAutomatically(true);
-        settings.setCacheMode(WebSettings.LOAD_DEFAULT);
-        settings.setSupportZoom(false);
-        settings.setBuiltInZoomControls(false);
-        settings.setDisplayZoomControls(false);
-        settings.setAllowFileAccess(false);
-        settings.setAllowContentAccess(false);
-        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
-        settings.setDefaultTextEncodingName("UTF-8");
-        settings.setJavaScriptCanOpenWindowsAutomatically(false);
-
-        CookieManager cookies = CookieManager.getInstance();
-        cookies.setAcceptCookie(true);
-        cookies.setAcceptThirdPartyCookies(webView, true);
-        webView.setWebChromeClient(new WebChromeClient());
-        webView.setWebViewClient(new WebViewClient() {
+        web.setWebViewClient(new WebViewClient() {
             @Override
-            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+            public boolean shouldOverrideUrlLoading(
+                WebView view, WebResourceRequest request
+            ) {
                 return routeUrl(request.getUrl());
             }
 
             @Override
-            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+            public boolean shouldOverrideUrlLoading(
+                WebView view, String url
+            ) {
                 return routeUrl(Uri.parse(url));
+            }
+
+            private boolean routeUrl(Uri uri) {
+                String scheme = uri.getScheme();
+
+                // Keep web navigation inside this player's WebView.
+                if ("https".equalsIgnoreCase(scheme)
+                    || "http".equalsIgnoreCase(scheme)) {
+                    return false;
+                }
+
+                // Do not launch external applications from page links.
+                return true;
             }
 
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
-                if (url != null &&
-                    (url.startsWith("https://richup.io") || url.startsWith("https://www.richup.io"))) {
-                    installAutoModeScript();
-                }
-            }
 
-            private boolean routeUrl(Uri uri) {
-                String scheme = uri.getScheme();
-                String host = uri.getHost();
-
-                // Keep Richup pages inside the app.
-                if ("https".equalsIgnoreCase(scheme) && host != null &&
-                    (host.equals("richup.io") || host.endsWith(".richup.io"))) {
-                    return false;
+                if (url != null && (
+                    url.startsWith("https://richup.io")
+                    || url.startsWith("https://www.richup.io")
+                )) {
+                    installAutoScript(index);
                 }
-
-                // Preserve the working login behavior: keep HTTP/HTTPS navigation in this WebView.
-                if ("https".equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme)) {
-                    webView.loadUrl(uri.toString());
-                    return true;
-                }
-                return true;
             }
         });
 
-        if (savedInstanceState == null) {
-            webView.loadUrl(HOME_URL);
-        } else if (webView.restoreState(savedInstanceState) == null) {
-            webView.loadUrl(HOME_URL);
+        browserHost.addView(web, new FrameLayout.LayoutParams(
+            -1, -1
+        ));
+
+        web.setVisibility(View.GONE);
+        web.loadUrl(HOME);
+        buildControlPanel();
+    }
+
+    private void selectPlayer(int index) {
+        selected = index;
+
+        for (int i = 0; i < COUNT; i++) {
+            if (players[i] != null) {
+                players[i].setVisibility(
+                    i == selected ? View.VISIBLE : View.GONE
+                );
+            }
+
+            View tab = tabs.findViewWithTag("tab_" + i);
+            if (tab instanceof TextView) {
+                TextView t = (TextView) tab;
+                t.setText(names[i]);
+                t.setTextColor(playerColors[i]);
+                t.setAlpha(i == selected ? 1f : 0.65f);
+            }
+        }
+
+        if (panel != null) {
+            panel.bringToFront();
+            panelToggle.bringToFront();
+            updateAutoLabel();
         }
     }
 
-    private void installAutoModeScript() {
+    private void buildControlPanel() {
+        if (panel != null) return;
+
+        LinearLayout controls = new LinearLayout(this);
+        controls.setOrientation(LinearLayout.VERTICAL);
+        controls.setGravity(Gravity.CENTER_HORIZONTAL);
+        controls.setPadding(dp(5), dp(5), dp(5), dp(5));
+
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(0xE617151F);
+        bg.setCornerRadius(dp(20));
+        bg.setStroke(dp(1), PURPLE);
+        controls.setBackground(bg);
+
+        TextView home = button("⌂ Home");
+        TextView reload = button("↻ Reload");
+        TextView awake = button("☾ Awake ON");
+        autoButton = button("▶ Auto Play");
+        TextView join = button("↗ Join Room");
+        TextView setup = button("⚙ Players");
+
+        home.setOnClickListener(v -> {
+            stopAuto(selected);
+            players[selected].loadUrl(HOME);
+        });
+
+        reload.setOnClickListener(v -> {
+            stopAuto(selected);
+            players[selected].reload();
+        });
+
+        awake.setText(keepAwake ? "☾ Awake ON" : "☾ Awake OFF");
+        awake.setOnClickListener(v -> {
+            keepAwake = !keepAwake;
+
+            if (keepAwake) {
+                getWindow().addFlags(
+                    WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                );
+            } else {
+                getWindow().clearFlags(
+                    WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                );
+            }
+
+            awake.setText(
+                keepAwake ? "☾ Awake ON" : "☾ Awake OFF"
+            );
+            savePreferences();
+        });
+
+        autoButton.setOnClickListener(v -> showAutoSettings());
+        join.setOnClickListener(v -> showJoinDialog());
+        setup.setOnClickListener(v -> showPlayerSettings());
+
+        controls.addView(home);
+        controls.addView(reload);
+        controls.addView(awake);
+        controls.addView(autoButton);
+        controls.addView(join);
+        controls.addView(setup);
+
+        panel = controls;
+
+        FrameLayout.LayoutParams pp = new FrameLayout.LayoutParams(
+            -2, -2, Gravity.RIGHT | Gravity.CENTER_VERTICAL
+        );
+        pp.rightMargin = dp(8);
+        browserHost.addView(panel, pp);
+
+        panelToggle = button("‹");
+        panelToggle.setTextSize(18);
+        panelToggle.setMinWidth(dp(34));
+        panelToggle.setOnClickListener(v -> {
+            panelOpen = !panelOpen;
+            panel.setVisibility(panelOpen ? View.VISIBLE : View.GONE);
+            panelToggle.setText(panelOpen ? "‹" : "›");
+            FrameLayout.LayoutParams tp =
+                (FrameLayout.LayoutParams) panelToggle.getLayoutParams();
+            tp.rightMargin = panelOpen ? dp(116) : dp(8);
+            panelToggle.setLayoutParams(tp);
+        });
+
+        FrameLayout.LayoutParams tp = new FrameLayout.LayoutParams(
+            dp(38), dp(48), Gravity.RIGHT | Gravity.CENTER_VERTICAL
+        );
+        tp.rightMargin = dp(116);
+        browserHost.addView(panelToggle, tp);
+    }
+
+    private void installAutoScript(int index) {
+        WebView web = players[index];
+        if (web == null) return;
+
         String script =
             "(function(){" +
-            "if(window.__richupAutoInstalled)return;window.__richupAutoInstalled=true;" +
-            "window.__richupAutoTimer=null;window.__richupAutoLastAction=0;" +
+            "if(window.__richupAutoInstalled)return;" +
+            "window.__richupAutoInstalled=true;" +
+            "window.__richupAutoTimer=null;" +
+            "window.__richupAutoLastAction=0;" +
             "window.richupAutoSetMode=function(enabled,buy,fast){" +
-            "if(window.__richupAutoTimer){clearInterval(window.__richupAutoTimer);window.__richupAutoTimer=null;}" +
-            "window.__richupAutoBuy=!!buy;window.__richupAutoFast=!!fast;if(!enabled)return;" +
+            "if(window.__richupAutoTimer){" +
+            "clearInterval(window.__richupAutoTimer);" +
+            "window.__richupAutoTimer=null;}" +
+            "window.__richupAutoBuy=!!buy;" +
+            "window.__richupAutoFast=!!fast;" +
+            "if(!enabled)return;" +
             "window.__richupAutoTimer=setInterval(function(){" +
-            "var now=Date.now();var gap=window.__richupAutoFast?450:1200;" +
+            "var now=Date.now();" +
+            "var gap=window.__richupAutoFast?450:1200;" +
             "if(now-window.__richupAutoLastAction<gap)return;" +
-            "var buttons=Array.from(document.querySelectorAll('button,[role=button]'));" +
-            "var label=function(b){return (b.innerText||b.textContent||b.getAttribute('aria-label')||'').trim().replace(/\\s+/g,' ');};" +
-            "var visible=function(b){return !b.disabled&&b.getAttribute('aria-disabled')!=='true'&&b.getClientRects().length>0&&getComputedStyle(b).visibility!=='hidden';};" +
-            "var find=function(re){return buttons.find(function(b){return visible(b)&&re.test(label(b));});};" +
-            "var click=function(b){if(!b)return false;b.click();window.__richupAutoLastAction=Date.now();return true;};" +
-            "var again=find(/roll\\s*again|roll again/i);if(again){click(again);return;}" +
-            "var buy=find(/^buy(?:\\s|$)|buy property|purchase property/i);" +
-            "if(buy&&window.__richupAutoBuy){click(buy);return;}" +
-            "var roll=find(/^roll the dice$|^roll dice$|^roll$/i);if(roll){click(roll);return;}" +
-            "var end=find(/^end turn$/i);if(end&&now-window.__richupAutoLastAction>=(window.__richupAutoFast?450:1800)){click(end);return;}" +
-            "var auction=find(/^auction$/i);if(auction&&now-window.__richupAutoLastAction>=(window.__richupAutoFast?450:1800)){click(auction);return;}" +
-            "},window.__richupAutoFast?150:300);};" +
-            "})();";
+            "var buttons=Array.from(document.querySelectorAll(" +
+            "'button,[role=button]'));" +
+            "var label=function(b){return (b.innerText||" +
+            "b.textContent||b.getAttribute('aria-label')||'')" +
+            ".trim().replace(/\\s+/g,' ');};" +
+            "var visible=function(b){return !b.disabled&&" +
+            "b.getAttribute('aria-disabled')!=='true'&&" +
+            "b.getClientRects().length>0&&" +
+            "getComputedStyle(b).visibility!=='hidden';};" +
+            "var find=function(re){return buttons.find(function(b){" +
+            "return visible(b)&&re.test(label(b));});};" +
+            "var click=function(b){if(!b)return false;b.click();" +
+            "window.__richupAutoLastAction=Date.now();return true;};" +
+            "var again=find(/roll\\s*again/i);" +
+            "if(again){click(again);return;}" +
+            "var buyButton=find(/^buy(?:\\s|$)|buy property|" +
+            "purchase property/i);" +
+            "if(buyButton&&window.__richupAutoBuy){" +
+            "click(buyButton);return;}" +
+            "var roll=find(/^roll the dice$|^roll dice$|^roll$/i);" +
+            "if(roll){click(roll);return;}" +
+            "var end=find(/^end turn$/i);" +
+            "if(end&&now-window.__richupAutoLastAction>=" +
+            "(window.__richupAutoFast?450:1800)){click(end);return;}" +
+            "var auction=find(/^auction$/i);" +
+            "if(auction&&now-window.__richupAutoLastAction>=" +
+            "(window.__richupAutoFast?450:1800)){click(auction);return;}" +
+            "},window.__richupAutoFast?150:300);};})();";
 
-        if (webView != null) {
-            webView.evaluateJavascript(script, value -> {
-                if (webView != null) {
-                    webView.evaluateJavascript(
-                        "if(window.richupAutoSetMode)window.richupAutoSetMode(" +
-                        autoMode + "," + autoBuy + "," + fastMode + ");", null);
-                }
-            });
-        }
+        web.evaluateJavascript(script, value -> applyAutoSettings(index));
     }
 
-    private void setAutoModeInPage() {
-        if (webView != null) {
-            webView.evaluateJavascript(
-                "if(window.richupAutoSetMode)window.richupAutoSetMode(" +
-                autoMode + "," + autoBuy + "," + fastMode + ");", null);
-        }
+    private void applyAutoSettings(int index) {
+        WebView web = players[index];
+        if (web == null) return;
+
+        web.evaluateJavascript(
+            "if(window.richupAutoSetMode)window.richupAutoSetMode(" +
+            autoPlay[index] + "," + autoBuy[index] + "," +
+            fastMode[index] + ");",
+            null
+        );
     }
 
     private void showAutoSettings() {
         LinearLayout layout = dialogLayout();
-        TextView heading = makeHeading("Auto Play Settings");
-        layout.addView(heading);
+        layout.addView(heading("Settings — " + names[selected]));
 
-        CheckBox playCheck = makeCheckBox("Auto Play", autoMode);
-        layout.addView(playCheck);
-        layout.addView(makeDescription(
-            "Automatically rolls the dice, takes Roll Again when available, and ends the turn when no extra roll remains."));
+        CheckBox play = check("Auto Play", autoPlay[selected]);
+        CheckBox buy = check("Auto Buy", autoBuy[selected]);
+        CheckBox fast = check("⚡ Fast Mode", fastMode[selected]);
 
-        CheckBox buyCheck = makeCheckBox("Auto Buy", autoBuy);
-        layout.addView(buyCheck);
-        layout.addView(makeDescription(
-            "Buys available properties when enabled and affordable; skips purchases the game does not allow."));
+        layout.addView(play);
+        layout.addView(description(
+            "Automatically attempts available dice rolls and turn actions."
+        ));
+        layout.addView(buy);
+        layout.addView(description(
+            "Attempts to buy properties when a matching button is available."
+        ));
+        layout.addView(fast);
+        layout.addView(description(
+            "Reduces the delay between attempts. Fast automation may violate " +
+            "game rules and could result in account restrictions."
+        ));
 
-        CheckBox fastCheck = makeCheckBox("⚡ Fast Mode", fastMode);
-        layout.addView(fastCheck);
-        layout.addView(makeDescription(
-            "Reduces the delay between automatic actions. Roll and Roll Again are attempted much faster (about 450 ms between clicks instead of 1.2 seconds). Actions can still be limited by game animations and loading."));
-
-        TextView warning = makeDescription(
-            "⚠ Ban risk: rapid automation may violate Richup's rules and could lead to account restrictions or a ban. Use at your own risk.");
-        warning.setTextColor(Color.rgb(255, 140, 140));
-        warning.setPadding(dp(12), dp(5), dp(8), dp(10));
-        layout.addView(warning);
-
-        TextView bots = makeButton("🪙 Auto Earn Coins (Bots Playing)");
-        bots.setTextSize(13);
-        bots.setPadding(dp(12), dp(12), dp(12), dp(12));
-        bots.setOnClickListener(v -> showBotSettings());
-        layout.addView(bots);
-
-        addFooter(layout);
         AlertDialog dialog = new AlertDialog.Builder(this)
             .setView(layout)
-            .setPositiveButton("Save", (d, which) -> {
-                autoMode = playCheck.isChecked();
-                autoBuy = buyCheck.isChecked();
-                fastMode = fastCheck.isChecked();
-                savePreferences();
-                updateAutoButtonLabel();
-                if (autoMode) installAutoModeScript(); else setAutoModeInPage();
-                Toast.makeText(this, autoMode ? "Auto Play enabled" : "Auto Play stopped",
-                    Toast.LENGTH_SHORT).show();
-            })
+            .setPositiveButton("Save", null)
             .setNegativeButton("Cancel", null)
             .create();
-        styleDialog(dialog);
+
+        dialog.setOnShowListener(d ->
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                .setOnClickListener(v -> {
+                    autoPlay[selected] = play.isChecked();
+                    autoBuy[selected] = buy.isChecked();
+                    fastMode[selected] = fast.isChecked();
+
+                    savePreferences();
+                    applyAutoSettings(selected);
+                    updateAutoLabel();
+                    dialog.dismiss();
+                })
+        );
+
         dialog.show();
-        styleDialogButtons(dialog);
+        styleDialog(dialog);
     }
 
-    private void showBotSettings() {
-        LinearLayout layout = dialogLayout();
-        layout.addView(makeHeading("Auto Earn Coins"));
+    private void stopAuto(int index) {
+        autoPlay[index] = false;
+        applyAutoSettings(index);
+        savePreferences();
+        updateAutoLabel();
+    }
 
-        TextView note = makeDescription(
-            "Set up to three bot profiles. Names, colors, and toggles are saved in this app. These settings do not create extra Richup players by themselves; real bots require a supported way to join and play as separate accounts.");
-        note.setPadding(dp(4), dp(8), dp(4), dp(12));
-        layout.addView(note);
-
-        EditText[] names = new EditText[3];
-        CheckBox[] enabledChecks = new CheckBox[3];
-        TextView[] colorButtons = new TextView[3];
-
-        for (int i = 0; i < 3; i++) {
-            final int index = i;
-            LinearLayout card = new LinearLayout(this);
-            card.setOrientation(LinearLayout.VERTICAL);
-            card.setPadding(dp(12), dp(8), dp(12), dp(10));
-            GradientDrawable cardBg = new GradientDrawable();
-            cardBg.setColor(CARD);
-            cardBg.setCornerRadius(dp(16));
-            cardBg.setStroke(dp(1), 0x665B4B80);
-            card.setBackground(cardBg);
-
-            TextView title = makeHeading("Bot Slot " + (i + 1));
-            title.setTextSize(15);
-            title.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
-            card.addView(title);
-
-            EditText name = new EditText(this);
-            name.setSingleLine(true);
-            name.setText(botNames[i]);
-            name.setHint("Player name");
-            name.setTextColor(Color.WHITE);
-            name.setHintTextColor(0xFF9B95A8);
-            name.setTextSize(14);
-            name.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
-            name.setPadding(dp(12), dp(8), dp(12), dp(8));
-            GradientDrawable inputBg = new GradientDrawable();
-            inputBg.setColor(0xFF1C1927);
-            inputBg.setCornerRadius(dp(12));
-            inputBg.setStroke(dp(1), 0xFF5C4B82);
-            name.setBackground(inputBg);
-            LinearLayout.LayoutParams nameParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            nameParams.topMargin = dp(5);
-            card.addView(name, nameParams);
-            names[i] = name;
-
-            CheckBox enabled = makeCheckBox("Enable this bot profile", botEnabled[i]);
-            card.addView(enabled);
-            enabledChecks[i] = enabled;
-
-            TextView color = makeButton("●  Change Color");
-            color.setTextColor(botColors[i]);
-            color.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
-            color.setPadding(dp(12), dp(8), dp(12), dp(8));
-            color.setOnClickListener(v -> {
-                int current = 0;
-                for (int j = 0; j < availableBotColors.length; j++) {
-                    if (availableBotColors[j] == botColors[index]) {
-                        current = j;
-                        break;
-                    }
-                }
-                botColors[index] = availableBotColors[(current + 1) % availableBotColors.length];
-                color.setTextColor(botColors[index]);
-            });
-            card.addView(color);
-            colorButtons[i] = color;
-
-            LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            cardParams.bottomMargin = dp(10);
-            layout.addView(card, cardParams);
+    private void updateAutoLabel() {
+        if (autoButton != null) {
+            autoButton.setText(
+                autoPlay[selected] ? "▶ Auto: ON" : "▶ Auto Play"
+            );
         }
-
-        addFooter(layout);
-        AlertDialog dialog = new AlertDialog.Builder(this)
-            .setView(layout)
-            .setPositiveButton("Save", (d, which) -> {
-                for (int i = 0; i < 3; i++) {
-                    String entered = names[i].getText().toString().trim();
-                    botNames[i] = entered.isEmpty() ? "Bot " + (i + 1) : entered;
-                    botEnabled[i] = enabledChecks[i].isChecked();
-                }
-                savePreferences();
-                Toast.makeText(this, "Bot profiles saved", Toast.LENGTH_SHORT).show();
-            })
-            .setNegativeButton("Cancel", null)
-            .create();
-        styleDialog(dialog);
-        dialog.show();
-        styleDialogButtons(dialog);
     }
 
-    private void showJoinRoomDialog() {
+    private void showJoinDialog() {
         LinearLayout layout = dialogLayout();
-        layout.addView(makeHeading("Join a Richup Room"));
+        layout.addView(heading("Join a Richup Room"));
 
-        EditText linkInput = new EditText(this);
-        linkInput.setSingleLine(true);
-        linkInput.setHint("Enter room code (e.g. xd9a3)");
-        linkInput.setHintTextColor(0xFF9B95A8);
-        linkInput.setTextColor(Color.WHITE);
-        linkInput.setTextSize(14);
-        linkInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
-        linkInput.setSelectAllOnFocus(true);
-        linkInput.setPadding(dp(12), dp(10), dp(12), dp(10));
-        GradientDrawable inputBg = new GradientDrawable();
-        inputBg.setColor(CARD);
-        inputBg.setCornerRadius(dp(12));
-        inputBg.setStroke(dp(1), PURPLE);
-        linkInput.setBackground(inputBg);
-        layout.addView(linkInput);
+        EditText codeInput = new EditText(this);
+        codeInput.setSingleLine(true);
+        codeInput.setHint("Room code (e.g. xd9a3)");
+        codeInput.setInputType(
+            InputType.TYPE_CLASS_TEXT |
+            InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+        );
+        codeInput.setTextColor(Color.WHITE);
+        codeInput.setHintTextColor(0xFF9B95A8);
+        codeInput.setPadding(dp(12), dp(10), dp(12), dp(10));
+        codeInput.setBackground(inputBackground());
+        layout.addView(codeInput);
 
         AlertDialog dialog = new AlertDialog.Builder(this)
             .setView(layout)
             .setPositiveButton("Join Room", null)
             .setNegativeButton("Cancel", null)
             .create();
-        dialog.setOnShowListener(d -> {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-                String code = linkInput.getText().toString().trim();
-                if (!code.matches("[A-Za-z0-9]+")) {
-                    linkInput.setError("Enter the room code only (letters and numbers)");
-                    return;
-                }
-                stopAutoMode();
-                webView.loadUrl("https://richup.io/room/" + code);
-                dialog.dismiss();
-            });
-        });
+
+        dialog.setOnShowListener(d ->
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                .setOnClickListener(v -> {
+                    String code = codeInput.getText().toString().trim();
+
+                    if (!code.matches("[A-Za-z0-9]+")) {
+                        codeInput.setError(
+                            "Enter letters and numbers only"
+                        );
+                        return;
+                    }
+
+                    players[selected].loadUrl(
+                        "https://richup.io/room/" + code
+                    );
+                    dialog.dismiss();
+                })
+        );
+
         dialog.show();
-        styleDialogButtons(dialog);
+        styleDialog(dialog);
+    }
+
+    private void showPlayerSettings() {
+        LinearLayout layout = dialogLayout();
+        layout.addView(heading("Player Names & Colors"));
+
+        EditText[] inputs = new EditText[COUNT];
+        TextView[] colors = new TextView[COUNT];
+
+        for (int i = 0; i < COUNT; i++) {
+            final int index = i;
+            EditText input = new EditText(this);
+            input.setSingleLine(true);
+            input.setText(names[i]);
+            input.setHint("Player name");
+            input.setTextColor(Color.WHITE);
+            input.setHintTextColor(0xFF9B95A8);
+            input.setPadding(dp(12), dp(8), dp(12), dp(8));
+            input.setBackground(inputBackground());
+            layout.addView(input);
+            inputs[i] = input;
+
+            TextView color = button("● Change color");
+            color.setTextColor(playerColors[i]);
+            color.setOnClickListener(v -> {
+                int current = 0;
+                for (int j = 0; j < colorChoices.length; j++) {
+                    if (colorChoices[j] == playerColors[index]) {
+                        current = j;
+                        break;
+                    }
+                }
+                playerColors[index] =
+                    colorChoices[(current + 1) % colorChoices.length];
+                color.setTextColor(playerColors[index]);
+            });
+            layout.addView(color);
+            colors[i] = color;
+        }
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setView(layout)
+            .setPositiveButton("Save", null)
+            .setNegativeButton("Cancel", null)
+            .create();
+
+        dialog.setOnShowListener(d ->
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                .setOnClickListener(v -> {
+                    for (int i = 0; i < COUNT; i++) {
+                        String entered =
+                            inputs[i].getText().toString().trim();
+                        if (!entered.isEmpty()) names[i] = entered;
+                    }
+
+                    savePreferences();
+                    refreshTabs();
+                    dialog.dismiss();
+                })
+        );
+
+        dialog.show();
+        styleDialog(dialog);
+    }
+
+    private void refreshTabs() {
+        for (int i = 0; i < COUNT; i++) {
+            View tab = tabs.findViewWithTag("tab_" + i);
+            if (tab instanceof TextView) {
+                ((TextView) tab).setText(names[i]);
+                ((TextView) tab).setTextColor(playerColors[i]);
+            }
+        }
     }
 
     private LinearLayout dialogLayout() {
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setPadding(dp(20), dp(12), dp(20), dp(12));
+        layout.setPadding(dp(18), dp(12), dp(18), dp(12));
         layout.setBackgroundColor(DARK);
         return layout;
     }
 
-    private TextView makeHeading(String text) {
-        TextView heading = new TextView(this);
-        heading.setText(text);
-        heading.setTextColor(PURPLE_PALE);
-        heading.setTextSize(20);
-        heading.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-        heading.setGravity(Gravity.CENTER);
-        heading.setPadding(0, dp(4), 0, dp(12));
-        return heading;
+    private TextView heading(String text) {
+        TextView t = new TextView(this);
+        t.setText(text);
+        t.setTextColor(PALE);
+        t.setTextSize(19);
+        t.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        t.setGravity(Gravity.CENTER);
+        t.setPadding(0, dp(5), 0, dp(12));
+        return t;
     }
 
-    private CheckBox makeCheckBox(String text, boolean checked) {
-        CheckBox box = new CheckBox(this);
-        box.setText(text);
-        box.setTextColor(Color.WHITE);
-        box.setTextSize(14);
-        box.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-        box.setButtonTintList(ColorStateList.valueOf(PURPLE));
-        box.setChecked(checked);
-        return box;
+    private TextView description(String text) {
+        TextView t = new TextView(this);
+        t.setText(text);
+        t.setTextColor(0xFFB9B3C9);
+        t.setTextSize(12);
+        t.setPadding(dp(12), 0, dp(4), dp(10));
+        return t;
     }
 
-    private void addFooter(LinearLayout layout) {
-        TextView footer = new TextView(this);
-        footer.setText("edited by abood");
-        footer.setTextColor(PURPLE_PALE);
-        footer.setTextSize(12);
-        footer.setGravity(Gravity.CENTER);
-        footer.setTypeface(Typeface.create("sans-serif", Typeface.ITALIC));
-        footer.setPadding(0, dp(14), 0, dp(2));
-        layout.addView(footer);
+    private CheckBox check(String text, boolean checked) {
+        CheckBox c = new CheckBox(this);
+        c.setText(text);
+        c.setTextColor(Color.WHITE);
+        c.setButtonTintList(ColorStateList.valueOf(PURPLE));
+        c.setChecked(checked);
+        return c;
     }
 
-    private void styleDialog(AlertDialog dialog) {
-        dialog.setOnShowListener(d -> styleDialogButtons(dialog));
+    private GradientDrawable inputBackground() {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(CARD);
+        bg.setCornerRadius(dp(12));
+        bg.setStroke(dp(1), PURPLE);
+        return bg;
     }
 
-    private void styleDialogButtons(AlertDialog dialog) {
-        if (dialog.getWindow() != null) {
-            GradientDrawable bg = new GradientDrawable();
-            bg.setColor(DARK);
-            bg.setCornerRadius(dp(22));
-            dialog.getWindow().setBackgroundDrawable(bg);
-        }
-        if (dialog.getButton(AlertDialog.BUTTON_POSITIVE) != null)
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(PURPLE_PALE);
-        if (dialog.getButton(AlertDialog.BUTTON_NEGATIVE) != null)
-            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(PURPLE_PALE);
-    }
+    private TextView button(String text) {
+        TextView t = new TextView(this);
+        t.setText(text);
+        t.setTextColor(Color.WHITE);
+        t.setTextSize(12);
+        t.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        t.setGravity(Gravity.CENTER);
+        t.setPadding(dp(10), dp(10), dp(10), dp(10));
+        t.setMinWidth(dp(90));
 
-    private void updateAutoButtonLabel() {
-        if (autoButton != null) autoButton.setText(autoMode ? "▶ Auto: ON" : "▶ Auto Play");
-    }
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(0xFF282239);
+        bg.setCornerRadius(dp(14));
+        bg.setStroke(dp(1), PURPLE);
+        t.setBackground(bg);
+        t.setClickable(true);
+        t.setFocusable(true);
 
-    private void stopAutoMode() {
-        autoMode = false;
-        updateAutoButtonLabel();
-        setAutoModeInPage();
-    }
-
-    private TextView makeDescription(String text) {
-        TextView description = new TextView(this);
-        description.setText(text);
-        description.setTextColor(0xFFB9B3C9);
-        description.setTextSize(12);
-        description.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
-        description.setPadding(dp(12), 0, dp(4), dp(10));
-        return description;
-    }
-
-    private TextView makeButton(String label) {
-        TextView button = new TextView(this);
-        button.setText(label);
-        button.setTextColor(Color.WHITE);
-        button.setTextSize(12);
-        button.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-        button.setGravity(Gravity.CENTER);
-        button.setPadding(dp(10), dp(10), dp(10), dp(10));
-        button.setMinWidth(dp(92));
-        GradientDrawable normal = new GradientDrawable();
-        normal.setColor(0xFF282239);
-        normal.setCornerRadius(dp(16));
-        normal.setStroke(dp(1), PURPLE);
-        RippleDrawable ripple = new RippleDrawable(
-            ColorStateList.valueOf(0x668B5CF6), normal, null);
-        button.setBackground(ripple);
-        button.setClickable(true);
-        button.setFocusable(true);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        params.bottomMargin = dp(4);
-        button.setLayoutParams(params);
-        return button;
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+            -1, -2
+        );
+        lp.bottomMargin = dp(4);
+        t.setLayoutParams(lp);
+        return t;
     }
 
     private void loadPreferences() {
-        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-        autoMode = prefs.getBoolean("autoMode", false);
-        autoBuy = prefs.getBoolean("autoBuy", false);
-        fastMode = prefs.getBoolean("fastMode", false);
         keepAwake = prefs.getBoolean("keepAwake", true);
-        for (int i = 0; i < 3; i++) {
-            botNames[i] = prefs.getString("botName" + i, "Bot " + (i + 1));
-            botColors[i] = prefs.getInt("botColor" + i, availableBotColors[i]);
-            botEnabled[i] = prefs.getBoolean("botEnabled" + i, false);
+
+        for (int i = 0; i < COUNT; i++) {
+            names[i] = prefs.getString("name" + i, names[i]);
+            playerColors[i] = prefs.getInt(
+                "color" + i, playerColors[i]
+            );
+            autoPlay[i] = prefs.getBoolean("autoPlay" + i, false);
+            autoBuy[i] = prefs.getBoolean("autoBuy" + i, false);
+            fastMode[i] = prefs.getBoolean("fastMode" + i, false);
         }
     }
 
     private void savePreferences() {
-        SharedPreferences.Editor editor = getSharedPreferences(PREFS, MODE_PRIVATE).edit();
-        editor.putBoolean("autoMode", autoMode);
-        editor.putBoolean("autoBuy", autoBuy);
-        editor.putBoolean("fastMode", fastMode);
-        editor.putBoolean("keepAwake", keepAwake);
-        for (int i = 0; i < 3; i++) {
-            editor.putString("botName" + i, botNames[i]);
-            editor.putInt("botColor" + i, botColors[i]);
-            editor.putBoolean("botEnabled" + i, botEnabled[i]);
+        SharedPreferences.Editor e = prefs.edit();
+        e.putBoolean("keepAwake", keepAwake);
+
+        for (int i = 0; i < COUNT; i++) {
+            e.putString("name" + i, names[i]);
+            e.putInt("color" + i, playerColors[i]);
+            e.putBoolean("autoPlay" + i, autoPlay[i]);
+            e.putBoolean("autoBuy" + i, autoBuy[i]);
+            e.putBoolean("fastMode" + i, fastMode[i]);
         }
-        editor.apply();
+
+        e.apply();
+    }
+
+    private void styleDialog(AlertDialog dialog) {
+        if (dialog.getWindow() != null) {
+            GradientDrawable bg = new GradientDrawable();
+            bg.setColor(DARK);
+            bg.setCornerRadius(dp(18));
+            dialog.getWindow().setBackgroundDrawable(bg);
+        }
+
+        if (dialog.getButton(AlertDialog.BUTTON_POSITIVE) != null) {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                .setTextColor(PALE);
+        }
+        if (dialog.getButton(AlertDialog.BUTTON_NEGATIVE) != null) {
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE)
+                .setTextColor(PALE);
+        }
     }
 
     private int dp(int value) {
-        return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+        return (int) (
+            value * getResources().getDisplayMetrics().density + 0.5f
+        );
     }
 
-    private void applyImmersiveMode() {
+    private void applyImmersive() {
         getWindow().getDecorView().setSystemUiVisibility(
-            View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
-            View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY |
-            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+            | View.SYSTEM_UI_FLAG_FULLSCREEN
+            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+        );
     }
 
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        if (hasFocus) applyImmersiveMode();
+        if (hasFocus) applyImmersive();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        if (webView != null) {
-            webView.onResume();
-            webView.resumeTimers();
-            if (autoMode) installAutoModeScript();
+
+        for (int i = 0; i < COUNT; i++) {
+            if (players[i] != null) {
+                players[i].onResume();
+                players[i].resumeTimers();
+                if (autoPlay[i]) installAutoScript(i);
+            }
         }
     }
 
     @Override
     protected void onPause() {
-        stopAutoMode();
-        if (webView != null) {
-            webView.onPause();
-            webView.pauseTimers();
+        for (WebView player : players) {
+            if (player != null) player.onPause();
         }
+
         super.onPause();
     }
 
     @Override
     public void onBackPressed() {
-        if (webView != null && webView.canGoBack()) webView.goBack();
-        else {
-            stopAutoMode();
+        WebView web = players[selected];
+
+        if (web != null && web.canGoBack()) {
+            web.goBack();
+        } else {
             super.onBackPressed();
         }
     }
 
     @Override
-    protected void onSaveInstanceState(Bundle outState) {
-        if (webView != null) webView.saveState(outState);
-        super.onSaveInstanceState(outState);
-    }
-
-    @Override
     protected void onDestroy() {
         savePreferences();
-        if (webView != null) {
-            webView.stopLoading();
-            webView.loadUrl("about:blank");
-            webView.clearHistory();
-            webView.removeAllViews();
-            webView.destroy();
-            webView = null;
+
+        for (int i = 0; i < COUNT; i++) {
+            WebView web = players[i];
+
+            if (web != null) {
+                web.stopLoading();
+                web.loadUrl("about:blank");
+                web.clearHistory();
+                web.removeAllViews();
+                web.destroy();
+                players[i] = null;
+            }
         }
+
         super.onDestroy();
     }
 }
