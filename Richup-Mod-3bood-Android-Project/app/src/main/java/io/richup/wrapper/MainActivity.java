@@ -17,6 +17,14 @@ import android.view.inputmethod.InputMethodManager;
 import android.content.Context;
 import android.text.InputType;
 import android.widget.*;
+import android.text.TextUtils;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.regex.Pattern;
 
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -37,6 +45,21 @@ public class MainActivity extends Activity {
     private static final int COUNT = 4;
 
     private final WebView[] players = new WebView[COUNT];
+    private final ArrayList<UserScript> userScripts = new ArrayList<>();
+
+    private static class UserScript {
+        String name;
+        String code;
+        String sourceId;
+        boolean enabled;
+
+        UserScript(String name, String code, String sourceId, boolean enabled) {
+            this.name = name;
+            this.code = code;
+            this.sourceId = sourceId;
+            this.enabled = enabled;
+        }
+    }
     private final boolean[] autoPlay = new boolean[COUNT];
     private final boolean[] autoBuy = new boolean[COUNT];
     private final boolean[] fastMode = new boolean[COUNT];
@@ -80,6 +103,7 @@ public class MainActivity extends Activity {
         applyImmersive();
         prefs = getSharedPreferences("richup_mod_settings", MODE_PRIVATE);
         loadPreferences();
+        loadUserScripts();
 
         profilesSupported = WebViewFeature.isFeatureSupported(
             WebViewFeature.MULTI_PROFILE
@@ -229,6 +253,7 @@ public class MainActivity extends Activity {
                     || url.startsWith("https://www.richup.io")
                 )) {
                     installAutoScript(index);
+                    runUserScripts(index, url);
                 }
             }
         });
@@ -288,6 +313,7 @@ public class MainActivity extends Activity {
         autoButton = button("▶ Auto Play");
         TextView join = button("↗ Join Room");
         TextView setup = button("⚙ Players");
+        TextView scripts = button("⌘ Scripts");
 
         home.setOnClickListener(v -> {
             stopAuto(selected);
@@ -322,6 +348,7 @@ public class MainActivity extends Activity {
         autoButton.setOnClickListener(v -> showAutoSettings());
         join.setOnClickListener(v -> showJoinDialog());
         setup.setOnClickListener(v -> showPlayerSettings());
+        scripts.setOnClickListener(v -> showScriptsManager());
 
         controls.addView(home);
         controls.addView(reload);
@@ -329,6 +356,7 @@ public class MainActivity extends Activity {
         controls.addView(autoButton);
         controls.addView(join);
         controls.addView(setup);
+        controls.addView(scripts);
 
         panel = controls;
 
@@ -356,6 +384,236 @@ public class MainActivity extends Activity {
         );
         tp.rightMargin = dp(116);
         browserHost.addView(panelToggle, tp);
+    }
+
+    // User scripts are stored in SharedPreferences. Bundled .js files belong in
+    // app/src/main/assets/userscripts/ and are loaded automatically on startup.
+    private void loadUserScripts() {
+        userScripts.clear();
+        String saved = prefs.getString("userScripts", "[]");
+        try {
+            JSONArray arr = new JSONArray(saved);
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject obj = arr.optJSONObject(i);
+                if (obj == null) continue;
+                String code = obj.optString("code", "");
+                if (code.trim().isEmpty()) continue;
+                String name = obj.optString("name", "Unnamed script");
+                String id = obj.optString("id", "saved_" + i);
+                boolean enabled = obj.optBoolean("enabled", false);
+                userScripts.add(new UserScript(name, code, id, enabled));
+            }
+        } catch (Exception ignored) { }
+
+        try {
+            String[] files = getAssets().list("userscripts");
+            if (files != null) {
+                for (String file : files) {
+                    if (!file.toLowerCase().endsWith(".js")) continue;
+                    StringBuilder code = new StringBuilder();
+                    try (BufferedReader reader = new BufferedReader(
+                            new InputStreamReader(getAssets().open("userscripts/" + file), StandardCharsets.UTF_8))) {
+                        String line;
+                        while ((line = reader.readLine()) != null) code.append(line).append('\n');
+                    }
+                    String id = "asset:" + file;
+                    if (findScriptById(id) == null) {
+                        String source = code.toString();
+                        userScripts.add(new UserScript(extractScriptName(source, file), source, id, false));
+                    }
+                }
+            }
+        } catch (Exception ignored) { }
+        saveUserScripts();
+    }
+
+    private UserScript findScriptById(String id) {
+        for (UserScript script : userScripts) if (script.sourceId.equals(id)) return script;
+        return null;
+    }
+
+    private String extractScriptName(String code, String fallback) {
+        java.util.regex.Matcher m = Pattern.compile("(?im)^\\s*//\\s*@name\\s+(.+?)\\s*$").matcher(code);
+        return m.find() ? m.group(1).trim() : fallback;
+    }
+
+    private void saveUserScripts() {
+        JSONArray arr = new JSONArray();
+        try {
+            for (UserScript script : userScripts) {
+                JSONObject obj = new JSONObject();
+                obj.put("name", script.name);
+                obj.put("code", script.code);
+                obj.put("id", script.sourceId);
+                obj.put("enabled", script.enabled);
+                arr.put(obj);
+            }
+            prefs.edit().putString("userScripts", arr.toString()).apply();
+        } catch (Exception ignored) { }
+    }
+
+    private void showScriptsManager() {
+        LinearLayout layout = dialogLayout();
+        layout.addView(heading("Userscripts"));
+        layout.addView(description("Scripts run only on Richup pages. Only enable scripts you trust."));
+
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        list.setPadding(0, dp(4), 0, dp(4));
+        if (userScripts.isEmpty()) {
+            list.addView(description("No scripts yet. Add a .js file to app/src/main/assets/userscripts/ or paste one below."));
+        }
+        for (int i = 0; i < userScripts.size(); i++) {
+            final int index = i;
+            UserScript script = userScripts.get(i);
+            LinearLayout card = new LinearLayout(this);
+            card.setOrientation(LinearLayout.HORIZONTAL);
+            card.setGravity(Gravity.CENTER_VERTICAL);
+            card.setPadding(dp(8), dp(6), dp(4), dp(6));
+            GradientDrawable cardBg = new GradientDrawable();
+            cardBg.setColor(CARD);
+            cardBg.setCornerRadius(dp(12));
+            card.setBackground(cardBg);
+            LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2);
+            cp.bottomMargin = dp(6);
+            list.addView(card, cp);
+
+            CheckBox enabled = new CheckBox(this);
+            enabled.setButtonTintList(ColorStateList.valueOf(PALE));
+            enabled.setChecked(script.enabled);
+            card.addView(enabled, new LinearLayout.LayoutParams(-2, -2));
+
+            TextView title = new TextView(this);
+            title.setText(script.name);
+            title.setTextColor(Color.WHITE);
+            title.setTextSize(13);
+            title.setMaxLines(2);
+            title.setEllipsize(TextUtils.TruncateAt.END);
+            LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(0, -2, 1f);
+            titleLp.leftMargin = dp(4);
+            card.addView(title, titleLp);
+
+            TextView delete = button("✕");
+            delete.setTextSize(12);
+            delete.setMinWidth(dp(38));
+            delete.setPadding(dp(8), dp(6), dp(8), dp(6));
+            card.addView(delete, new LinearLayout.LayoutParams(-2, -2));
+            enabled.setOnCheckedChangeListener((buttonView, checked) -> {
+                userScripts.get(index).enabled = checked;
+                saveUserScripts();
+                Toast.makeText(this, checked ? "Script enabled" : "Script disabled — reload the page to remove its changes", Toast.LENGTH_SHORT).show();
+                WebView web = players[selected];
+                if (web != null && web.getUrl() != null) runUserScripts(selected, web.getUrl());
+            });
+            delete.setOnClickListener(v -> new AlertDialog.Builder(this)
+                .setTitle("Delete script?")
+                .setMessage("Remove “" + userScripts.get(index).name + "” from the app?")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Delete", (d, w) -> {
+                    userScripts.remove(index);
+                    saveUserScripts();
+                    showScriptsManager();
+                }).show());
+        }
+        scroll.addView(list);
+        layout.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1f));
+
+        TextView add = button("＋ Add your script");
+        add.setOnClickListener(v -> showAddScriptDialog());
+        layout.addView(add);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setView(layout)
+            .setPositiveButton("Done", null)
+            .create();
+        dialog.show();
+        styleDialog(dialog);
+        dialog.getWindow().setLayout((int)(getResources().getDisplayMetrics().widthPixels * 0.92f), (int)(getResources().getDisplayMetrics().heightPixels * 0.82f));
+    }
+
+    private void showAddScriptDialog() {
+        LinearLayout layout = dialogLayout();
+        layout.addView(heading("Add your script"));
+        EditText nameInput = new EditText(this);
+        nameInput.setSingleLine(true);
+        nameInput.setHint("Script name (optional)");
+        nameInput.setTextColor(Color.WHITE);
+        nameInput.setHintTextColor(0xFF9B95A8);
+        nameInput.setBackground(inputBackground());
+        nameInput.setPadding(dp(12), dp(10), dp(12), dp(10));
+        layout.addView(nameInput);
+
+        EditText codeInput = new EditText(this);
+        codeInput.setGravity(Gravity.TOP | Gravity.START);
+        codeInput.setHint("Paste your .user.js or JavaScript code here…");
+        codeInput.setTextColor(Color.WHITE);
+        codeInput.setHintTextColor(0xFF9B95A8);
+        codeInput.setTextSize(12);
+        codeInput.setTypeface(Typeface.MONOSPACE);
+        codeInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        codeInput.setMinLines(8);
+        codeInput.setPadding(dp(12), dp(10), dp(12), dp(10));
+        codeInput.setBackground(inputBackground());
+        layout.addView(codeInput, new LinearLayout.LayoutParams(-1, 0, 1f));
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setView(layout)
+            .setPositiveButton("Save script", null)
+            .setNegativeButton("Cancel", null)
+            .create();
+        dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String code = codeInput.getText().toString().trim();
+            if (code.isEmpty()) { codeInput.setError("Paste the script code first"); return; }
+            String name = nameInput.getText().toString().trim();
+            if (name.isEmpty()) name = extractScriptName(code, "Custom script " + (userScripts.size() + 1));
+            String id = "custom:" + System.currentTimeMillis();
+            userScripts.add(new UserScript(name, code, id, true));
+            saveUserScripts();
+            dialog.dismiss();
+            showScriptsManager();
+            WebView web = players[selected];
+            if (web != null && web.getUrl() != null) runUserScripts(selected, web.getUrl());
+        }));
+        dialog.show();
+        styleDialog(dialog);
+        dialog.getWindow().setLayout((int)(getResources().getDisplayMetrics().widthPixels * 0.94f), (int)(getResources().getDisplayMetrics().heightPixels * 0.86f));
+    }
+
+    private void runUserScripts(int index, String url) {
+        WebView web = players[index];
+        if (web == null || url == null) return;
+        Uri uri = Uri.parse(url);
+        String host = uri.getHost();
+        if (host == null || !(host.equalsIgnoreCase("richup.io") || host.toLowerCase().endsWith(".richup.io"))) return;
+
+        for (UserScript script : userScripts) {
+            if (!script.enabled || !scriptMatches(script.code, url)) continue;
+            String code = script.code;
+            // Lightweight compatibility shim for common CSS-focused userscripts.
+            String shim = "(function(){if(window.__3boodScriptIds&&window.__3boodScriptIds[" + JSONObject.quote(script.sourceId) + "])return;" +
+                "window.__3boodScriptIds=window.__3boodScriptIds||{};window.__3boodScriptIds[" + JSONObject.quote(script.sourceId) + "]=true;" +
+                "window.GM_addStyle=window.GM_addStyle||function(css){var s=document.createElement('style');s.textContent=css; (document.head||document.documentElement).appendChild(s);return s;};" +
+                "window.GM_getResourceText=window.GM_getResourceText||function(){return '';};})();\n";
+            // Strip the metadata block: it is not executable JavaScript.
+            code = code.replaceFirst("(?s)^\\s*// ==UserScript==.*?// ==/UserScript==\\s*", "");
+            web.evaluateJavascript(shim + "\n;try{\n" + code + "\n}catch(e){console.error('Userscript failed:',e);}", null);
+        }
+    }
+
+    private boolean scriptMatches(String code, String url) {
+        java.util.regex.Matcher matcher = Pattern.compile("(?im)^\\s*//\\s*@match\\s+([^\\s]+)").matcher(code);
+        boolean hasMatch = false;
+        while (matcher.find()) {
+            hasMatch = true;
+            String glob = matcher.group(1).trim();
+            String regex = Pattern.quote(glob).replace("*", "\\E.*\\Q");
+            try {
+                if (Pattern.compile("^" + regex + "$", Pattern.CASE_INSENSITIVE).matcher(url).matches()) return true;
+            } catch (Exception ignored) { }
+        }
+        // Without @match, do not let pasted code run on arbitrary pages; keep it to Richup only.
+        return !hasMatch && (url.startsWith("https://richup.io") || url.startsWith("https://www.richup.io"));
     }
 
     private void installAutoScript(int index) {
