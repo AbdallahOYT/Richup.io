@@ -1,7 +1,7 @@
 
 
  // ==UserScript==
- // @name         Richup.io Palestine Names & Flag Replacer
+ // @name         Palestine Names & Flag Replacer
  // @namespace    3bood-richup
  // @version      2.4.0
  // @description  Replaces Israeli names and flag artwork with Palestinian equivalents.
