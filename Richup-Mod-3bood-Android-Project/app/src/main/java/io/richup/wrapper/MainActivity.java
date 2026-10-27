@@ -302,6 +302,7 @@ public class MainActivity extends Activity {
     }
 
     private void selectPlayer(int index) {
+        if (index < 0 || index >= COUNT || !playerVisible[index]) index = 0;
         selected = index;
         if (players[index] != null && !playerLoaded[index]) {
             playerLoaded[index] = true;
@@ -314,6 +315,14 @@ public class MainActivity extends Activity {
                 players[i].setVisibility(
                     i == selected ? View.VISIBLE : View.GONE
                 );
+                // A tab switched OFF in Players is suspended and cannot run game/automation scripts.
+                players[i].getSettings().setJavaScriptEnabled(playerVisible[i]);
+                if (!playerVisible[i]) {
+                    players[i].onPause();
+                } else if (i == selected) {
+                    players[i].onResume();
+                    players[i].resumeTimers();
+                }
             }
 
             View tab = tabs.findViewWithTag("tab_" + i);
@@ -353,6 +362,7 @@ public class MainActivity extends Activity {
         TextView reload = button("↻  Reload");
         TextView awake = button(keepAwake ? "☾  Awake ON" : "☾  Awake OFF");
         autoButton = button("▶  Auto Play");
+        TextView autoStartButton = button("⏵  Auto Start");
         TextView join = button("↗  Join Room");
         TextView setup = button("♙  Players");
         TextView scripts = button("⌘  Scripts");
@@ -371,6 +381,7 @@ public class MainActivity extends Activity {
             savePreferences();
         });
         autoButton.setOnClickListener(v -> showAutoSettings());
+        autoStartButton.setOnClickListener(v -> clickStartGame(selected));
         join.setOnClickListener(v -> showJoinDialog());
         setup.setOnClickListener(v -> showPlayerSettings());
         scripts.setOnClickListener(v -> showScriptsManager());
@@ -380,7 +391,7 @@ public class MainActivity extends Activity {
         backup.setOnClickListener(v -> showBackupDialog());
 
         // Short, collapsible categories keep the panel narrow and avoid a wall of text.
-        addSidebarCategory(controls, "GAME", "⌂", new View[] { home, reload, awake, autoButton }, true);
+        addSidebarCategory(controls, "GAME", "⌂", new View[] { home, reload, awake, autoButton, autoStartButton }, true);
         addSidebarCategory(controls, "PLAYERS", "♙", new View[] { join, setup }, false);
         addSidebarCategory(controls, "TOOLS", "✦", new View[] { scripts, analytics, themes, backup, sidebar }, false);
         analytics.setVisibility(prefs.getBoolean("showAnalytics", true) ? View.VISIBLE : View.GONE);
@@ -692,6 +703,27 @@ public class MainActivity extends Activity {
         return !hasMatch && (url.startsWith("https://richup.io") || url.startsWith("https://www.richup.io"));
     }
 
+    private void clickStartGame(int index) {
+        WebView web = players[index];
+        if (web == null || !playerLoaded[index]) {
+            Toast.makeText(this, "Open the game first, then tap Auto Start.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String js = "(function(){"
+            + "var bs=Array.from(document.querySelectorAll('button,[role=button]'));"
+            + "var norm=function(b){return (b.innerText||b.textContent||b.getAttribute('aria-label')||'').trim().replace(/\\s+/g,' ');};"
+            + "var b=bs.find(function(x){return x.getClientRects().length>0&&!x.disabled&&x.getAttribute('aria-disabled')!=='true'&&/^start game$/i.test(norm(x));});"
+            + "if(!b){b=bs.find(function(x){return x.getClientRects().length>0&&!x.disabled&&x.querySelector('svg[data-icon=circle-play]')&&/start game/i.test(norm(x));});}"
+            + "if(b){b.click();return 'started';}return 'not-found';})()";
+        web.evaluateJavascript(js, result -> {
+            if (result != null && result.contains("started")) {
+                Toast.makeText(this, "Start Game clicked.", Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this, "Start Game button wasn't found on this screen.", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
     private void installAutoScript(int index) {
         WebView web = players[index];
         if (web == null) return;
@@ -726,12 +758,11 @@ public class MainActivity extends Activity {
             "return visible(b)&&re.test(label(b));});};" +
             "var click=function(b){if(!b)return false;b.click();" +
             "window.__richupAutoLastAction=Date.now();return true;};" +
+            // Buy before Roll Again: landing on an unowned property can show both actions.
+            "var buyButton=find(/\\bbuy\\b|purchase property|buy property/i);" +
+            "if(buyButton&&window.__richupAutoBuy){click(buyButton);return;}" +
             "var again=find(/roll\\s*again/i);" +
             "if(again){click(again);return;}" +
-            "var buyButton=find(/^buy(?:\\s|$)|buy property|" +
-            "purchase property/i);" +
-            "if(buyButton&&window.__richupAutoBuy){" +
-            "click(buyButton);return;}" +
             "var roll=find(/^roll the dice$|^roll dice$|^roll$/i);" +
             "if(roll){click(roll);return;}" +
             "var end=find(/^end turn$/i);" +
@@ -1314,7 +1345,17 @@ public class MainActivity extends Activity {
             for (int i = 0; i < COUNT; i++) {
                 String entered = inputs[i].getText().toString().trim();
                 if (!entered.isEmpty()) names[i] = entered;
+                boolean wasVisible = playerVisible[i];
                 playerVisible[i] = (i == 0) || visibility[i].isChecked();
+                if (wasVisible && !playerVisible[i]) {
+                    autoPlay[i] = false;
+                    applyAutoSettings(i);
+                    if (players[i] != null) players[i].onPause();
+                } else if (!wasVisible && playerVisible[i] && players[i] != null) {
+                    players[i].onResume();
+                    players[i].resumeTimers();
+                    if (autoPlay[i]) installAutoScript(i);
+                }
             }
             if (!playerVisible[selected]) selected = 0;
             savePreferences(); refreshTabs(); selectPlayer(selected); dialog.dismiss();
