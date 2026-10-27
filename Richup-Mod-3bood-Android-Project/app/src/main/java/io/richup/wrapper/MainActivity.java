@@ -79,6 +79,7 @@ public class MainActivity extends Activity {
     private final boolean[] autoPlay = new boolean[COUNT];
     private final boolean[] autoBuy = new boolean[COUNT];
     private final boolean[] fastMode = new boolean[COUNT];
+    private final boolean[] autoStart = new boolean[COUNT];
     private final String[] names = {
         "Main", "Player 1", "Player 2", "Player 3"
     };
@@ -361,8 +362,7 @@ public class MainActivity extends Activity {
         TextView home = button("⌂  Home");
         TextView reload = button("↻  Reload");
         TextView awake = button(keepAwake ? "☾  Awake ON" : "☾  Awake OFF");
-        autoButton = button("▶  Auto Play");
-        TextView autoStartButton = button("⏵  Auto Start");
+        autoButton = button("💰  Auto Earn");
         TextView join = button("↗  Join Room");
         TextView setup = button("♙  Players");
         TextView scripts = button("⌘  Scripts");
@@ -381,7 +381,6 @@ public class MainActivity extends Activity {
             savePreferences();
         });
         autoButton.setOnClickListener(v -> showAutoSettings());
-        autoStartButton.setOnClickListener(v -> clickStartGame(selected));
         join.setOnClickListener(v -> showJoinDialog());
         setup.setOnClickListener(v -> showPlayerSettings());
         scripts.setOnClickListener(v -> showScriptsManager());
@@ -391,7 +390,7 @@ public class MainActivity extends Activity {
         backup.setOnClickListener(v -> showBackupDialog());
 
         // Short, collapsible categories keep the panel narrow and avoid a wall of text.
-        addSidebarCategory(controls, "GAME", "⌂", new View[] { home, reload, awake, autoButton, autoStartButton }, true);
+        addSidebarCategory(controls, "GAME", "⌂", new View[] { home, reload, awake, autoButton }, true);
         addSidebarCategory(controls, "PLAYERS", "♙", new View[] { join, setup }, false);
         addSidebarCategory(controls, "TOOLS", "✦", new View[] { scripts, analytics, themes, backup, sidebar }, false);
         analytics.setVisibility(prefs.getBoolean("showAnalytics", true) ? View.VISIBLE : View.GONE);
@@ -734,13 +733,15 @@ public class MainActivity extends Activity {
             "window.__richupAutoInstalled=true;" +
             "window.__richupAutoTimer=null;" +
             "window.__richupAutoLastAction=0;" +
-            "window.richupAutoSetMode=function(enabled,buy,fast){" +
+            "window.richupAutoSetMode=function(enabled,buy,fast,start){" +
             "if(window.__richupAutoTimer){" +
             "clearInterval(window.__richupAutoTimer);" +
             "window.__richupAutoTimer=null;}" +
+            "window.__richupAutoPlayEnabled=!!enabled;" +
             "window.__richupAutoBuy=!!buy;" +
             "window.__richupAutoFast=!!fast;" +
-            "if(!enabled)return;" +
+            "window.__richupAutoStart=!!start;" +
+            "if(!enabled&&!start)return;" +
             "window.__richupAutoTimer=setInterval(function(){" +
             "var now=Date.now();" +
             "var gap=window.__richupAutoFast?450:1200;" +
@@ -758,6 +759,10 @@ public class MainActivity extends Activity {
             "return visible(b)&&re.test(label(b));});};" +
             "var click=function(b){if(!b)return false;b.click();" +
             "window.__richupAutoLastAction=Date.now();return true;};" +
+            // Auto Start has priority so a lobby can start before turn automation.
+            "var startButton=window.__richupAutoStart?find(/^start game$/i):null;" +
+            "if(startButton){click(startButton);return;}" +
+            "if(!window.__richupAutoPlayEnabled)return;" +
             // Buy before Roll Again: landing on an unowned property can show both actions.
             "var buyButton=find(/\\bbuy\\b|purchase property|buy property/i);" +
             "if(buyButton&&window.__richupAutoBuy){click(buyButton);return;}" +
@@ -783,7 +788,7 @@ public class MainActivity extends Activity {
         web.evaluateJavascript(
             "if(window.richupAutoSetMode)window.richupAutoSetMode(" +
             autoPlay[index] + "," + autoBuy[index] + "," +
-            fastMode[index] + ");",
+            fastMode[index] + "," + autoStart[index] + ");",
             null
         );
     }
@@ -796,9 +801,11 @@ public class MainActivity extends Activity {
         CheckBox play = check("▶  Auto Play", autoPlay[selected]);
         CheckBox buy = check("◈  Auto Buy", autoBuy[selected]);
         CheckBox fast = check("⚡  Fast Mode", fastMode[selected]);
+        CheckBox start = check("✅  Auto Start", autoStart[selected]);
         addSettingCard(layout, "AUTO PLAY", "Automatically attempts available dice rolls and turn actions.", play);
         addSettingCard(layout, "AUTO BUY", "Attempts to buy properties when a matching button is available.", buy);
         addSettingCard(layout, "FAST MODE", "Shortens the delay between attempts. Very fast automation may be unreliable or restricted by game rules.", fast);
+        addSettingCard(layout, "AUTO START", "Automatically clicks the visible Start Game button when it appears in this player tab. Works independently of Auto Play.", start);
 
         TextView footer = description("Edited by abood  •  Richup by Bodz");
         footer.setGravity(Gravity.CENTER);
@@ -812,6 +819,7 @@ public class MainActivity extends Activity {
             autoPlay[selected] = play.isChecked();
             autoBuy[selected] = buy.isChecked();
             fastMode[selected] = fast.isChecked();
+            autoStart[selected] = start.isChecked();
             savePreferences();
             applyAutoSettings(selected);
             updateAutoLabel();
@@ -1166,7 +1174,7 @@ public class MainActivity extends Activity {
     private void updateAutoLabel() {
         if (autoButton != null) {
             autoButton.setText(
-                autoPlay[selected] ? "▶ Auto: ON" : "▶ Auto Play"
+                autoPlay[selected] ? "💰 Auto Earn: ON" : "💰 Auto Earn"
             );
         }
     }
@@ -1321,7 +1329,10 @@ public class MainActivity extends Activity {
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.HORIZONTAL); row.setGravity(Gravity.CENTER_VERTICAL);
             row.setPadding(0, dp(4), 0, 0);
-            CheckBox shown = check("Show tab", playerVisible[i]);
+            TextView toggleHint = description(i == 0 ? "Main player is always ON." : "OFF hides this tab and pauses its page and automation in the background.");
+            toggleHint.setPadding(0, dp(7), 0, 0);
+            card.addView(toggleHint);
+            CheckBox shown = check("Player tab ON", playerVisible[i]);
             if (i == 0) { shown.setChecked(true); shown.setEnabled(false); }
             row.addView(shown, new LinearLayout.LayoutParams(0, -2, 1f)); visibility[i] = shown;
             TextView color = button("●  COLOR");
@@ -1349,6 +1360,7 @@ public class MainActivity extends Activity {
                 playerVisible[i] = (i == 0) || visibility[i].isChecked();
                 if (wasVisible && !playerVisible[i]) {
                     autoPlay[i] = false;
+                    autoStart[i] = false;
                     applyAutoSettings(i);
                     if (players[i] != null) players[i].onPause();
                 } else if (!wasVisible && playerVisible[i] && players[i] != null) {
@@ -1484,6 +1496,7 @@ public class MainActivity extends Activity {
             autoPlay[i] = prefs.getBoolean("autoPlay" + i, false);
             autoBuy[i] = prefs.getBoolean("autoBuy" + i, false);
             fastMode[i] = prefs.getBoolean("fastMode" + i, false);
+            autoStart[i] = prefs.getBoolean("autoStart" + i, false);
         }
     }
 
@@ -1499,6 +1512,7 @@ public class MainActivity extends Activity {
             e.putBoolean("autoPlay" + i, autoPlay[i]);
             e.putBoolean("autoBuy" + i, autoBuy[i]);
             e.putBoolean("fastMode" + i, fastMode[i]);
+            e.putBoolean("autoStart" + i, autoStart[i]);
         }
 
         e.apply();
