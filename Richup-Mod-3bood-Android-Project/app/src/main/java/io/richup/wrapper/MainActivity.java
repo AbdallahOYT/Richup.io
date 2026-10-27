@@ -4,6 +4,12 @@ package io.richup.wrapper;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.Debug;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.app.ActivityManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -45,6 +51,8 @@ public class MainActivity extends Activity {
     private static final int COUNT = 4;
 
     private final WebView[] players = new WebView[COUNT];
+    private final boolean[] playerLoaded = new boolean[COUNT];
+    private final boolean[] playerVisible = new boolean[] { true, true, true, true };
     private final ArrayList<UserScript> userScripts = new ArrayList<>();
 
     private static class UserScript {
@@ -85,6 +93,10 @@ public class MainActivity extends Activity {
     private View panel;
     private TextView panelToggle;
     private TextView autoButton;
+    private final Handler analyticsHandler = new Handler(Looper.getMainLooper());
+    private boolean analyticsOpen = false;
+    private long lastCpuTimeNs = 0;
+    private long lastWallTimeMs = 0;
 
     private int selected = 0;
     private boolean panelOpen = true;
@@ -168,6 +180,7 @@ public class MainActivity extends Activity {
             );
             lp.setMargins(dp(3), 0, dp(3), 0);
             tabs.addView(tab, lp);
+            tab.setVisibility(playerVisible[i] ? View.VISIBLE : View.GONE);
         }
 
         tabScroll.addView(tabs);
@@ -267,12 +280,16 @@ public class MainActivity extends Activity {
         ));
 
         web.setVisibility(View.GONE);
-        web.loadUrl(HOME);
+        // Lazy-load inactive players to reduce startup CPU, RAM and network use.
         buildControlPanel();
     }
 
     private void selectPlayer(int index) {
         selected = index;
+        if (players[index] != null && !playerLoaded[index]) {
+            playerLoaded[index] = true;
+            players[index].loadUrl(HOME);
+        }
 
         for (int i = 0; i < COUNT; i++) {
             if (players[i] != null) {
@@ -288,6 +305,7 @@ public class MainActivity extends Activity {
                 t.setTextColor(playerColors[i]);
                 t.setBackground(playerTabBackground(i == selected));
                 t.setAlpha(i == selected ? 1f : 0.78f);
+                t.setVisibility(playerVisible[i] ? View.VISIBLE : View.GONE);
             }
         }
 
@@ -322,6 +340,7 @@ public class MainActivity extends Activity {
         TextView join = button("↗ Join Room");
         TextView setup = button("⚙ Players");
         TextView scripts = button("⌘ Scripts");
+        TextView analytics = button("◈ Analytics");
 
         home.setOnClickListener(v -> {
             stopAuto(selected);
@@ -357,6 +376,7 @@ public class MainActivity extends Activity {
         join.setOnClickListener(v -> showJoinDialog());
         setup.setOnClickListener(v -> showPlayerSettings());
         scripts.setOnClickListener(v -> showScriptsManager());
+        analytics.setOnClickListener(v -> showAnalyticsDialog());
 
         controls.addView(home);
         controls.addView(reload);
@@ -365,6 +385,7 @@ public class MainActivity extends Activity {
         controls.addView(join);
         controls.addView(setup);
         controls.addView(scripts);
+        controls.addView(analytics);
 
         panel = controls;
 
@@ -379,7 +400,9 @@ public class MainActivity extends Activity {
         panelToggle.setMinWidth(dp(34));
         panelToggle.setOnClickListener(v -> {
             panelOpen = !panelOpen;
-            panel.setVisibility(panelOpen ? View.VISIBLE : View.GONE);
+            panel.setVisibility(View.VISIBLE);
+            if (panelOpen) { panel.setTranslationX(dp(150)); panel.setAlpha(0.25f); }
+            panel.animate().translationX(panelOpen ? 0f : dp(150)).alpha(panelOpen ? 1f : 0.25f).setDuration(220).withEndAction(() -> { if (!panelOpen) panel.setVisibility(View.GONE); }).start();
             panelToggle.setText(panelOpen ? "‹" : "›");
             FrameLayout.LayoutParams tp =
                 (FrameLayout.LayoutParams) panelToggle.getLayoutParams();
@@ -408,8 +431,8 @@ public class MainActivity extends Activity {
                 if (code.trim().isEmpty()) continue;
                 String name = obj.optString("name", "Unnamed script");
                 String id = obj.optString("id", "saved_" + i);
-                boolean enabled = obj.optBoolean("enabled", false);
-                userScripts.add(new UserScript(name, code, id, enabled));
+                // Userscripts always start OFF after app launch for safety.
+                userScripts.add(new UserScript(name, code, id, false));
             }
         } catch (Exception ignored) { }
 
@@ -576,7 +599,7 @@ public class MainActivity extends Activity {
             String name = nameInput.getText().toString().trim();
             if (name.isEmpty()) name = extractScriptName(code, "Custom script " + (userScripts.size() + 1));
             String id = "custom:" + System.currentTimeMillis();
-            userScripts.add(new UserScript(name, code, id, true));
+            userScripts.add(new UserScript(name, code, id, false));
             saveUserScripts();
             dialog.dismiss();
             showScriptsManager();
@@ -691,48 +714,129 @@ public class MainActivity extends Activity {
 
     private void showAutoSettings() {
         LinearLayout layout = dialogLayout();
-        layout.addView(heading("Settings — " + names[selected]));
+        layout.addView(heading("Bots & Automation  •  " + names[selected]));
+        layout.addView(description("Configure this player. Changes apply only to the selected tab."));
 
-        CheckBox play = check("Auto Play", autoPlay[selected]);
-        CheckBox buy = check("Auto Buy", autoBuy[selected]);
-        CheckBox fast = check("⚡ Fast Mode", fastMode[selected]);
+        CheckBox play = check("▶  Auto Play", autoPlay[selected]);
+        CheckBox buy = check("◈  Auto Buy", autoBuy[selected]);
+        CheckBox fast = check("⚡  Fast Mode", fastMode[selected]);
+        addSettingCard(layout, "AUTO PLAY", "Automatically attempts available dice rolls and turn actions.", play);
+        addSettingCard(layout, "AUTO BUY", "Attempts to buy properties when a matching button is available.", buy);
+        addSettingCard(layout, "FAST MODE", "Shortens the delay between attempts. Very fast automation may be unreliable or restricted by game rules.", fast);
 
-        layout.addView(play);
-        layout.addView(description(
-            "Automatically attempts available dice rolls and turn actions."
-        ));
-        layout.addView(buy);
-        layout.addView(description(
-            "Attempts to buy properties when a matching button is available."
-        ));
-        layout.addView(fast);
-        layout.addView(description(
-            "Reduces the delay between attempts. Fast automation may violate " +
-            "game rules and could result in account restrictions."
-        ));
+        TextView footer = description("Edited by abood  •  Richup by Bodz");
+        footer.setGravity(Gravity.CENTER);
+        footer.setPadding(0, dp(12), 0, dp(2));
+        layout.addView(footer);
 
         AlertDialog dialog = new AlertDialog.Builder(this)
-            .setView(layout)
-            .setPositiveButton("Save", null)
-            .setNegativeButton("Cancel", null)
-            .create();
-
-        dialog.setOnShowListener(d ->
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE)
-                .setOnClickListener(v -> {
-                    autoPlay[selected] = play.isChecked();
-                    autoBuy[selected] = buy.isChecked();
-                    fastMode[selected] = fast.isChecked();
-
-                    savePreferences();
-                    applyAutoSettings(selected);
-                    updateAutoLabel();
-                    dialog.dismiss();
-                })
-        );
-
+            .setView(layout).setPositiveButton("Save", null)
+            .setNegativeButton("Cancel", null).create();
+        dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            autoPlay[selected] = play.isChecked();
+            autoBuy[selected] = buy.isChecked();
+            fastMode[selected] = fast.isChecked();
+            savePreferences();
+            applyAutoSettings(selected);
+            updateAutoLabel();
+            dialog.dismiss();
+        }));
         dialog.show();
         styleDialog(dialog);
+        if (dialog.getWindow() != null) dialog.getWindow().setLayout((int)(getResources().getDisplayMetrics().widthPixels * 0.92f), -2);
+    }
+
+    private void addSettingCard(LinearLayout parent, String title, String desc, CheckBox control) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(12), dp(10), dp(10), dp(8));
+        card.setBackground(cardBackground());
+        TextView label = new TextView(this);
+        label.setText(title);
+        label.setTextColor(PALE);
+        label.setTextSize(10);
+        label.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        card.addView(label);
+        card.addView(control);
+        TextView detail = description(desc);
+        detail.setPadding(dp(4), 0, dp(4), dp(3));
+        card.addView(detail);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.bottomMargin = dp(8);
+        parent.addView(card, lp);
+    }
+
+    private GradientDrawable cardBackground() {
+        GradientDrawable bg = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+            new int[] { 0xFF29243A, 0xFF201C2D });
+        bg.setCornerRadius(dp(16));
+        bg.setStroke(dp(1), 0xFF403653);
+        return bg;
+    }
+
+    private void showAnalyticsDialog() {
+        analyticsOpen = true;
+        LinearLayout layout = dialogLayout();
+        layout.addView(heading("Analytics & Game Booster"));
+        layout.addView(description("Live estimates for this app and the selected Richup tab."));
+
+        TextView[] values = new TextView[6];
+        String[] labels = { "APP CPU", "WEBVIEW FPS", "FRAME / LAG", "BATTERY", "BATTERY TEMP", "APP MEMORY" };
+        String[] initial = { "Measuring…", "Measuring…", "Measuring…", "Reading…", "Reading…", "Reading…" };
+        for (int i = 0; i < labels.length; i++) {
+            LinearLayout card = new LinearLayout(this);
+            card.setOrientation(LinearLayout.VERTICAL);
+            card.setPadding(dp(13), dp(10), dp(13), dp(10));
+            card.setBackground(cardBackground());
+            TextView label = new TextView(this);
+            label.setText(labels[i]); label.setTextColor(0xFFB8AECF); label.setTextSize(10);
+            label.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            TextView value = new TextView(this);
+            value.setText(initial[i]); value.setTextColor(PALE); value.setTextSize(21);
+            value.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            card.addView(label); card.addView(value); values[i] = value;
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+            lp.bottomMargin = dp(7); layout.addView(card, lp);
+        }
+        TextView note = description("FPS and frame timing are measured inside the webpage. Android does not expose reliable device-wide CPU temperature or GPU metrics to ordinary apps, so these are app-level estimates where available.");
+        layout.addView(note);
+        AlertDialog dialog = new AlertDialog.Builder(this).setView(layout).setPositiveButton("Close", (d, w) -> analyticsOpen = false).create();
+        dialog.setOnCancelListener(d -> analyticsOpen = false);
+        dialog.setOnDismissListener(d -> analyticsOpen = false);
+        dialog.show(); styleDialog(dialog);
+        if (dialog.getWindow() != null) dialog.getWindow().setLayout((int)(getResources().getDisplayMetrics().widthPixels * 0.90f), (int)(getResources().getDisplayMetrics().heightPixels * 0.84f));
+        lastCpuTimeNs = Debug.threadCpuTimeNanos(); lastWallTimeMs = android.os.SystemClock.elapsedRealtime();
+        Runnable updater = new Runnable() {
+            @Override public void run() {
+                if (!analyticsOpen || isFinishing()) return;
+                try {
+                    long cpuNow = Debug.threadCpuTimeNanos();
+                    long wallNow = android.os.SystemClock.elapsedRealtime();
+                    long cpuDelta = Math.max(0, cpuNow - lastCpuTimeNs);
+                    long wallDelta = Math.max(1, wallNow - lastWallTimeMs) * 1000000L;
+                    double cpu = Math.min(100.0, 100.0 * cpuDelta / wallDelta);
+                    lastCpuTimeNs = cpuNow; lastWallTimeMs = wallNow;
+                    values[0].setText(String.format(java.util.Locale.US, "%.1f%% main thread", cpu));
+                    ActivityManager.MemoryInfo mi = new ActivityManager.MemoryInfo();
+                    ActivityManager am = (ActivityManager)getSystemService(ACTIVITY_SERVICE);
+                    if (am != null) { am.getMemoryInfo(mi); android.os.Debug.MemoryInfo mem = new android.os.Debug.MemoryInfo(); Debug.getMemoryInfo(mem); values[5].setText(String.format(java.util.Locale.US, "%.0f MB PSS", mem.getTotalPss() / 1024.0)); }
+                    Intent battery = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+                    if (battery != null) {
+                        int level = battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+                        int scale = battery.getIntExtra(BatteryManager.EXTRA_SCALE, 100);
+                        if (level >= 0 && scale > 0) values[3].setText((100 * level / scale) + "%");
+                        int temp = battery.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1);
+                        values[4].setText(temp >= 0 ? String.format(java.util.Locale.US, "%.1f°C", temp / 10.0) : "Unavailable");
+                    }
+                    WebView current = players[selected];
+                    if (current != null) current.evaluateJavascript("(function(){if(!window.__bodzFps){window.__bodzFps={n:0,last:performance.now(),fps:0,frame:0};(function tick(t){var s=window.__bodzFps;s.n++;if(t-s.last>=1000){s.fps=Math.round(s.n*1000/(t-s.last));s.frame=Math.round((t-s.last)/Math.max(1,s.n));s.n=0;s.last=t;}requestAnimationFrame(tick)})(performance.now());}return JSON.stringify(window.__bodzFps)})()", result -> {
+                        try { JSONObject o = new JSONObject(result == null ? "{}" : result.replaceAll("^\"|\"$", "")); int fps = o.optInt("fps", 0); int frame = o.optInt("frame", 0); values[1].setText(fps > 0 ? fps + " FPS" : "Measuring…"); values[2].setText(frame > 0 ? frame + " ms / frame" : "Measuring…"); } catch (Exception ignored) { values[1].setText("Unavailable"); values[2].setText("Unavailable"); }
+                    });
+                } catch (Exception ignored) { }
+                analyticsHandler.postDelayed(this, 1500);
+            }
+        };
+        analyticsHandler.post(updater);
     }
 
     private void stopAuto(int index) {
@@ -852,6 +956,7 @@ public class MainActivity extends Activity {
 
         EditText[] inputs = new EditText[COUNT];
         TextView[] colors = new TextView[COUNT];
+        CheckBox[] visibility = new CheckBox[COUNT];
 
         for (int i = 0; i < COUNT; i++) {
             final int index = i;
@@ -865,6 +970,10 @@ public class MainActivity extends Activity {
             input.setBackground(inputBackground());
             layout.addView(input);
             inputs[i] = input;
+            CheckBox shown = check("Show this player tab", playerVisible[i]);
+            if (i == 0) { shown.setChecked(true); shown.setEnabled(false); }
+            layout.addView(shown);
+            visibility[i] = shown;
 
             TextView color = button("● Change color");
             color.setTextColor(playerColors[i]);
@@ -894,13 +1003,16 @@ public class MainActivity extends Activity {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE)
                 .setOnClickListener(v -> {
                     for (int i = 0; i < COUNT; i++) {
-                        String entered =
-                            inputs[i].getText().toString().trim();
+                        String entered = inputs[i].getText().toString().trim();
                         if (!entered.isEmpty()) names[i] = entered;
+                        playerVisible[i] = (i == 0) || visibility[i].isChecked();
                     }
-
+                    if (!playerVisible[selected]) {
+                        selected = 0;
+                    }
                     savePreferences();
                     refreshTabs();
+                    selectPlayer(selected);
                     dialog.dismiss();
                 })
         );
@@ -916,6 +1028,7 @@ public class MainActivity extends Activity {
                 ((TextView) tab).setText(names[i]);
                 ((TextView) tab).setTextColor(playerColors[i]);
                 ((TextView) tab).setBackground(playerTabBackground(i == selected));
+                tab.setVisibility(playerVisible[i] ? View.VISIBLE : View.GONE);
             }
         }
     }
@@ -1013,6 +1126,7 @@ public class MainActivity extends Activity {
 
         for (int i = 0; i < COUNT; i++) {
             names[i] = prefs.getString("name" + i, names[i]);
+            playerVisible[i] = i == 0 || prefs.getBoolean("visible" + i, true);
             playerColors[i] = prefs.getInt(
                 "color" + i, playerColors[i]
             );
@@ -1028,6 +1142,7 @@ public class MainActivity extends Activity {
 
         for (int i = 0; i < COUNT; i++) {
             e.putString("name" + i, names[i]);
+            e.putBoolean("visible" + i, playerVisible[i]);
             e.putInt("color" + i, playerColors[i]);
             e.putBoolean("autoPlay" + i, autoPlay[i]);
             e.putBoolean("autoBuy" + i, autoBuy[i]);
