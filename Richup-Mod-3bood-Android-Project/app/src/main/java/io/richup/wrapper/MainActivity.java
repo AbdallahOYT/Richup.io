@@ -65,12 +65,15 @@ public class MainActivity extends Activity {
         String code;
         String sourceId;
         boolean enabled;
+        String lastStatus = "Disabled";
+        final boolean[] playerTargets = new boolean[] { true, true, true, true };
 
         UserScript(String name, String code, String sourceId, boolean enabled) {
             this.name = name;
             this.code = code;
             this.sourceId = sourceId;
             this.enabled = enabled;
+            this.lastStatus = enabled ? "Enabled" : "Disabled";
         }
     }
     private final boolean[] autoPlay = new boolean[COUNT];
