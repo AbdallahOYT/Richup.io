@@ -156,7 +156,11 @@ public class MainActivity extends Activity {
             TextView tab = button(names[i]);
             tab.setTag("tab_" + i);
             tab.setMinWidth(dp(88));
+            tab.setTextSize(12);
+            tab.setPadding(dp(16), dp(11), dp(16), dp(11));
             tab.setTextColor(playerColors[i]);
+            tab.setBackground(playerTabBackground(i == selected));
+            tab.setElevation(dp(2));
             tab.setOnClickListener(v -> selectPlayer(index));
 
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
@@ -282,7 +286,8 @@ public class MainActivity extends Activity {
                 TextView t = (TextView) tab;
                 t.setText(names[i]);
                 t.setTextColor(playerColors[i]);
-                t.setAlpha(i == selected ? 1f : 0.65f);
+                t.setBackground(playerTabBackground(i == selected));
+                t.setAlpha(i == selected ? 1f : 0.78f);
             }
         }
 
@@ -299,12 +304,15 @@ public class MainActivity extends Activity {
         LinearLayout controls = new LinearLayout(this);
         controls.setOrientation(LinearLayout.VERTICAL);
         controls.setGravity(Gravity.CENTER_HORIZONTAL);
-        controls.setPadding(dp(5), dp(5), dp(5), dp(5));
+        controls.setPadding(dp(7), dp(8), dp(7), dp(8));
+        controls.setElevation(dp(10));
 
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(0xE617151F);
-        bg.setCornerRadius(dp(20));
-        bg.setStroke(dp(1), PURPLE);
+        GradientDrawable bg = new GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            new int[] { 0xF52A243A, 0xF0181622 }
+        );
+        bg.setCornerRadius(dp(22));
+        bg.setStroke(dp(1), 0xFF7652D6);
         controls.setBackground(bg);
 
         TextView home = button("⌂ Home");
@@ -745,19 +753,29 @@ public class MainActivity extends Activity {
     private void showJoinDialog() {
         LinearLayout layout = dialogLayout();
         layout.addView(heading("Join a Richup Room"));
+        layout.addView(description(
+            "Enter a room code or paste the full Richup room link."
+        ));
 
         EditText codeInput = new EditText(this);
         codeInput.setSingleLine(true);
-        codeInput.setHint("Room code (e.g. xd9a3)");
-        codeInput.setInputType(
-            InputType.TYPE_CLASS_TEXT |
-            InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
-        );
+        codeInput.setHint("Room code or full link");
         codeInput.setTextColor(Color.WHITE);
         codeInput.setHintTextColor(0xFF9B95A8);
-        codeInput.setPadding(dp(12), dp(10), dp(12), dp(10));
+        codeInput.setTextSize(14);
+        codeInput.setPadding(dp(14), dp(13), dp(14), dp(13));
         codeInput.setBackground(inputBackground());
+        codeInput.setInputType(
+            InputType.TYPE_CLASS_TEXT |
+            InputType.TYPE_TEXT_VARIATION_URI
+        );
         layout.addView(codeInput);
+
+        TextView example = description(
+            "Example: ihs8s  •  https://richup.io/room/ihs8s"
+        );
+        example.setPadding(dp(4), dp(9), dp(4), dp(2));
+        layout.addView(example);
 
         AlertDialog dialog = new AlertDialog.Builder(this)
             .setView(layout)
@@ -768,17 +786,51 @@ public class MainActivity extends Activity {
         dialog.setOnShowListener(d ->
             dialog.getButton(AlertDialog.BUTTON_POSITIVE)
                 .setOnClickListener(v -> {
-                    String code = codeInput.getText().toString().trim();
+                    String entered = codeInput.getText().toString().trim();
+                    if (entered.isEmpty()) {
+                        codeInput.setError("Enter a room code or link");
+                        return;
+                    }
 
-                    if (!code.matches("[A-Za-z0-9]+")) {
+                    String roomCode = null;
+                    if (entered.matches("[A-Za-z0-9_-]{3,64}")) {
+                        // A short room code such as ihs8s.
+                        roomCode = entered;
+                    } else {
+                        // Accept full links, including links without a scheme.
+                        String candidate = entered;
+                        if (!candidate.matches("(?i)^https?://.*")) {
+                            candidate = "https://" + candidate;
+                        }
+                        try {
+                            Uri uri = Uri.parse(candidate);
+                            String host = uri.getHost();
+                            boolean validHost = host != null && (
+                                host.equalsIgnoreCase("richup.io") ||
+                                host.equalsIgnoreCase("www.richup.io")
+                            );
+                            java.util.regex.Matcher matcher = Pattern.compile(
+                                "(?i)^/room/([A-Za-z0-9_-]{3,64})/?$"
+                            ).matcher(uri.getPath() == null ? "" : uri.getPath());
+                            if (validHost &&
+                                ("http".equalsIgnoreCase(uri.getScheme()) ||
+                                 "https".equalsIgnoreCase(uri.getScheme())) &&
+                                matcher.matches()) {
+                                roomCode = matcher.group(1);
+                            }
+                        } catch (Exception ignored) { }
+                    }
+
+                    if (roomCode == null) {
                         codeInput.setError(
-                            "Enter letters and numbers only"
+                            "Use a room code or a Richup link ending in /room/CODE"
                         );
                         return;
                     }
 
+                    // Normalize to the official HTTPS room URL and keep it in-app.
                     players[selected].loadUrl(
-                        "https://richup.io/room/" + code
+                        "https://richup.io/room/" + roomCode
                     );
                     dialog.dismiss();
                 })
@@ -786,6 +838,12 @@ public class MainActivity extends Activity {
 
         dialog.show();
         styleDialog(dialog);
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setLayout(
+                (int) (getResources().getDisplayMetrics().widthPixels * 0.92f),
+                -2
+            );
+        }
     }
 
     private void showPlayerSettings() {
@@ -857,6 +915,7 @@ public class MainActivity extends Activity {
             if (tab instanceof TextView) {
                 ((TextView) tab).setText(names[i]);
                 ((TextView) tab).setTextColor(playerColors[i]);
+                ((TextView) tab).setBackground(playerTabBackground(i == selected));
             }
         }
     }
@@ -896,6 +955,23 @@ public class MainActivity extends Activity {
         c.setButtonTintList(ColorStateList.valueOf(PURPLE));
         c.setChecked(checked);
         return c;
+    }
+
+    private GradientDrawable playerTabBackground(boolean selectedTab) {
+        GradientDrawable bg;
+        if (selectedTab) {
+            bg = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[] { 0xFF8B5CF6, 0xFF6D28D9 }
+            );
+            bg.setStroke(dp(1), 0xFFB9A0FF);
+        } else {
+            bg = new GradientDrawable();
+            bg.setColor(0xFF242033);
+            bg.setStroke(dp(1), 0xFF403653);
+        }
+        bg.setCornerRadius(dp(16));
+        return bg;
     }
 
     private GradientDrawable inputBackground() {
