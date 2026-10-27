@@ -5,6 +5,10 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.os.Bundle;
 import android.os.BatteryManager;
+import android.graphics.drawable.Drawable;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Debug;
@@ -44,7 +48,7 @@ import androidx.webkit.WebViewFeature;
 
 public class MainActivity extends Activity {
 
-    private static final int PURPLE = Color.rgb(139, 92, 246);
+    private static int PURPLE = Color.rgb(139, 92, 246);
     private static final int PALE = Color.rgb(196, 181, 253);
     private static final int DARK = Color.rgb(23, 21, 31);
     private static final int CARD = Color.rgb(36, 32, 51);
@@ -100,7 +104,13 @@ public class MainActivity extends Activity {
     private long lastWallTimeMs = 0;
 
     private int selected = 0;
-    private boolean panelOpen = true;
+    private boolean panelOpen = false;
+    private int panelOpacity = 92;
+    private int panelWidthDp = 150;
+    private int themeAccent = Color.rgb(139, 92, 246);
+    private String themeName = "Violet";
+    private static final int REQ_IMPORT_SCRIPT = 4101, REQ_EXPORT_SCRIPT = 4102, REQ_BACKUP_EXPORT = 4103, REQ_BACKUP_IMPORT = 4104;
+    private int pendingExportScript = -1;
     private boolean keepAwake = true;
     private boolean profilesSupported = false;
     private SharedPreferences prefs;
@@ -116,6 +126,7 @@ public class MainActivity extends Activity {
         applyImmersive();
         prefs = getSharedPreferences("richup_mod_settings", MODE_PRIVATE);
         loadPreferences();
+        PURPLE = themeAccent;
         loadUserScripts();
 
         profilesSupported = WebViewFeature.isFeatureSupported(
@@ -135,6 +146,7 @@ public class MainActivity extends Activity {
         }
 
         selectPlayer(0);
+        panelOpen = false;
 
         if (!profilesSupported) {
             new AlertDialog.Builder(this)
@@ -270,6 +282,7 @@ public class MainActivity extends Activity {
                     url.startsWith("https://richup.io")
                     || url.startsWith("https://www.richup.io")
                 )) {
+                    prefs.edit().putString("roomUrl" + index, url).apply();
                     installAutoScript(index);
                     runUserScripts(index, url);
                 }
@@ -289,7 +302,8 @@ public class MainActivity extends Activity {
         selected = index;
         if (players[index] != null && !playerLoaded[index]) {
             playerLoaded[index] = true;
-            players[index].loadUrl(HOME);
+            String savedRoom = prefs.getString("roomUrl" + index, HOME);
+            players[index].loadUrl(savedRoom);
         }
 
         for (int i = 0; i < COUNT; i++) {
@@ -342,6 +356,9 @@ public class MainActivity extends Activity {
         TextView setup = button("⚙ Players");
         TextView scripts = button("⌘ Scripts");
         TextView analytics = button("◈ Analytics");
+        TextView sidebar = button("☷ Sidebar & Layout");
+        TextView themes = button("✦ Theme Studio");
+        TextView backup = button("⇅ Backup / Restore");
 
         home.setOnClickListener(v -> {
             stopAuto(selected);
@@ -378,6 +395,9 @@ public class MainActivity extends Activity {
         setup.setOnClickListener(v -> showPlayerSettings());
         scripts.setOnClickListener(v -> showScriptsManager());
         analytics.setOnClickListener(v -> showAnalyticsDialog());
+        sidebar.setOnClickListener(v -> showSidebarSettings());
+        themes.setOnClickListener(v -> showThemeStudio());
+        backup.setOnClickListener(v -> showBackupDialog());
 
         controls.addView(home);
         controls.addView(reload);
@@ -387,6 +407,13 @@ public class MainActivity extends Activity {
         controls.addView(setup);
         controls.addView(scripts);
         controls.addView(analytics);
+        controls.addView(sidebar);
+        controls.addView(themes);
+        controls.addView(backup);
+        analytics.setVisibility(prefs.getBoolean("showAnalytics", true) ? View.VISIBLE : View.GONE);
+        themes.setVisibility(prefs.getBoolean("showThemes", true) ? View.VISIBLE : View.GONE);
+        backup.setVisibility(prefs.getBoolean("showBackup", true) ? View.VISIBLE : View.GONE);
+        if (prefs.getBoolean("compactSidebar", false)) { for (int i=0;i<controls.getChildCount();i++) { View child=controls.getChildAt(i); if(child instanceof TextView)((TextView)child).setTextSize(10); } }
 
         panel = controls;
 
@@ -399,23 +426,15 @@ public class MainActivity extends Activity {
         panelToggle = button("‹");
         panelToggle.setTextSize(18);
         panelToggle.setMinWidth(dp(34));
-        panelToggle.setOnClickListener(v -> {
-            panelOpen = !panelOpen;
-            panel.setVisibility(View.VISIBLE);
-            if (panelOpen) { panel.setTranslationX(dp(150)); panel.setAlpha(0.25f); }
-            panel.animate().translationX(panelOpen ? 0f : dp(150)).alpha(panelOpen ? 1f : 0.25f).setDuration(220).withEndAction(() -> { if (!panelOpen) panel.setVisibility(View.GONE); }).start();
-            panelToggle.setText(panelOpen ? "‹" : "›");
-            FrameLayout.LayoutParams tp =
-                (FrameLayout.LayoutParams) panelToggle.getLayoutParams();
-            tp.rightMargin = panelOpen ? dp(116) : dp(8);
-            panelToggle.setLayoutParams(tp);
-        });
 
         FrameLayout.LayoutParams tp = new FrameLayout.LayoutParams(
             dp(38), dp(48), Gravity.RIGHT | Gravity.CENTER_VERTICAL
         );
-        tp.rightMargin = dp(116);
+        tp.rightMargin = dp(8);
         browserHost.addView(panelToggle, tp);
+        panel.setVisibility(View.GONE);
+        panelToggle.setText("›");
+        panelToggle.setOnClickListener(v -> togglePanel());
     }
 
     // User scripts are stored in SharedPreferences. Bundled .js files belong in
@@ -433,7 +452,9 @@ public class MainActivity extends Activity {
                 String name = obj.optString("name", "Unnamed script");
                 String id = obj.optString("id", "saved_" + i);
                 // Userscripts always start OFF after app launch for safety.
-                userScripts.add(new UserScript(name, code, id, false));
+                UserScript loaded = new UserScript(name, code, id, false);
+                JSONArray targets = obj.optJSONArray("targets"); if (targets != null) for (int t = 0; t < Math.min(COUNT, targets.length()); t++) loaded.playerTargets[t] = targets.optBoolean(t, true);
+                userScripts.add(loaded);
             }
         } catch (Exception ignored) { }
 
@@ -478,6 +499,7 @@ public class MainActivity extends Activity {
                 obj.put("code", script.code);
                 obj.put("id", script.sourceId);
                 obj.put("enabled", script.enabled);
+                JSONArray targets = new JSONArray(); for (boolean target : script.playerTargets) targets.put(target); obj.put("targets", targets);
                 arr.put(obj);
             }
             prefs.edit().putString("userScripts", arr.toString()).apply();
@@ -511,6 +533,13 @@ public class MainActivity extends Activity {
             cp.bottomMargin = dp(6);
             list.addView(card, cp);
 
+            TextView art = new TextView(this);
+            String[] artIcons = {"✦", "◈", "✿", "⚡", "☯", "◆", "❖", "✧"};
+            int[] artColors = {0xFF8B5CF6, 0xFF06B6D4, 0xFFEC4899, 0xFFF59E0B, 0xFF22C55E, 0xFF6366F1, 0xFFEF4444, 0xFF14B8A6};
+            int artIndex = Math.abs(script.sourceId.hashCode()) % artIcons.length;
+            art.setText(artIcons[artIndex]); art.setTextColor(Color.WHITE); art.setTextSize(18); art.setGravity(Gravity.CENTER);
+            GradientDrawable artBg = new GradientDrawable(GradientDrawable.Orientation.TL_BR, new int[]{artColors[artIndex], 0xFF29243A}); artBg.setCornerRadius(dp(11)); art.setBackground(artBg);
+            card.addView(art, new LinearLayout.LayoutParams(dp(38), dp(38)));
             CheckBox enabled = new CheckBox(this);
             enabled.setButtonTintList(ColorStateList.valueOf(PALE));
             enabled.setChecked(script.enabled);
@@ -525,14 +554,22 @@ public class MainActivity extends Activity {
             LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(0, -2, 1f);
             titleLp.leftMargin = dp(4);
             card.addView(title, titleLp);
+            title.setOnClickListener(v -> showEditScriptDialog(index));
 
+            LinearLayout actions = new LinearLayout(this); actions.setOrientation(LinearLayout.VERTICAL);
+            TextView edit = button("Edit"); edit.setTextSize(10); edit.setMinWidth(dp(48)); edit.setPadding(dp(5), dp(4), dp(5), dp(4));
+            edit.setOnClickListener(v -> showEditScriptDialog(index));
+            TextView export = button("↥"); export.setTextSize(11); export.setMinWidth(dp(48)); export.setPadding(dp(5), dp(4), dp(5), dp(4));
+            export.setOnClickListener(v -> { pendingExportScript = index; Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT); intent.addCategory(Intent.CATEGORY_OPENABLE); intent.setType("text/javascript"); intent.putExtra(Intent.EXTRA_TITLE, safeFileName(userScripts.get(index).name) + ".js"); startActivityForResult(intent, REQ_EXPORT_SCRIPT); });
             TextView delete = button("✕");
             delete.setTextSize(12);
             delete.setMinWidth(dp(38));
             delete.setPadding(dp(8), dp(6), dp(8), dp(6));
-            card.addView(delete, new LinearLayout.LayoutParams(-2, -2));
+            actions.addView(edit); actions.addView(export); actions.addView(delete);
+            card.addView(actions, new LinearLayout.LayoutParams(-2, -2));
             enabled.setOnCheckedChangeListener((buttonView, checked) -> {
                 userScripts.get(index).enabled = checked;
+                userScripts.get(index).lastStatus = checked ? "Enabled" : "Disabled";
                 saveUserScripts();
                 Toast.makeText(this, checked ? "Script enabled" : "Script disabled — reload the page to remove its changes", Toast.LENGTH_SHORT).show();
                 WebView web = players[selected];
@@ -551,9 +588,15 @@ public class MainActivity extends Activity {
         scroll.addView(list);
         layout.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1f));
 
-        TextView add = button("＋ Add your script");
+        TextView add = button("＋ Add script manually");
         add.setOnClickListener(v -> showAddScriptDialog());
         layout.addView(add);
+        TextView importFile = button("⇧ Import .js file");
+        importFile.setOnClickListener(v -> { Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT); intent.addCategory(Intent.CATEGORY_OPENABLE); intent.setType("*/*"); startActivityForResult(intent, REQ_IMPORT_SCRIPT); });
+        layout.addView(importFile);
+        TextView backupScripts = button("Export all scripts (JSON)");
+        backupScripts.setOnClickListener(v -> { Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT); intent.addCategory(Intent.CATEGORY_OPENABLE); intent.setType("application/json"); intent.putExtra(Intent.EXTRA_TITLE, "richup-userscripts.json"); startActivityForResult(intent, REQ_BACKUP_EXPORT); });
+        layout.addView(backupScripts);
 
         AlertDialog dialog = new AlertDialog.Builder(this)
             .setView(layout)
@@ -620,7 +663,7 @@ public class MainActivity extends Activity {
         if (host == null || !(host.equalsIgnoreCase("richup.io") || host.toLowerCase().endsWith(".richup.io"))) return;
 
         for (UserScript script : userScripts) {
-            if (!script.enabled || !scriptMatches(script.code, url)) continue;
+            if (!script.enabled || !script.playerTargets[index] || !scriptMatches(script.code, url)) continue;
             String code = script.code;
             // Lightweight compatibility shim for common CSS-focused userscripts.
             String shim = "(function(){if(window.__3boodScriptIds&&window.__3boodScriptIds[" + JSONObject.quote(script.sourceId) + "])return;" +
@@ -774,6 +817,76 @@ public class MainActivity extends Activity {
         bg.setStroke(dp(1), 0xFF403653);
         return bg;
     }
+
+    private void togglePanel() {
+        panelOpen = !panelOpen;
+        prefs.edit().putBoolean("panelOpen", panelOpen).apply();
+        if (panelOpen) {
+            panel.setVisibility(View.VISIBLE); panel.setTranslationX(dp(22)); panel.setAlpha(0.35f);
+            panel.animate().translationX(0).alpha(1f).setDuration(180).start();
+        } else {
+            panel.animate().translationX(dp(panelWidthDp)).alpha(0.25f).setDuration(150).withEndAction(() -> panel.setVisibility(View.GONE)).start();
+        }
+        panelToggle.setText(panelOpen ? "‹" : "›");
+        FrameLayout.LayoutParams tp = (FrameLayout.LayoutParams) panelToggle.getLayoutParams();
+        tp.rightMargin = panelOpen ? dp(panelWidthDp - 34) : dp(8); panelToggle.setLayoutParams(tp);
+    }
+
+    private String safeFileName(String value) { return value.replaceAll("[^A-Za-z0-9._-]", "_"); }
+
+    private void showEditScriptDialog(int index) {
+        UserScript script = userScripts.get(index); LinearLayout box = dialogLayout(); box.addView(heading("Edit userscript"));
+        EditText name = new EditText(this); name.setSingleLine(true); name.setText(script.name); name.setTextColor(Color.WHITE); name.setBackground(inputBackground()); box.addView(name);
+        EditText code = new EditText(this); code.setGravity(Gravity.TOP); code.setTypeface(Typeface.MONOSPACE); code.setTextSize(12); code.setText(script.code); code.setTextColor(Color.WHITE); code.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE); code.setMinLines(8); code.setBackground(inputBackground()); box.addView(code, new LinearLayout.LayoutParams(-1, 0, 1f));
+        box.addView(description("Run on which player tabs?")); CheckBox[] targets = new CheckBox[COUNT];
+        for (int i=0;i<COUNT;i++){ targets[i]=check(names[i],script.playerTargets[i]); box.addView(targets[i]); }
+        AlertDialog d = new AlertDialog.Builder(this).setView(box).setPositiveButton("Save",null).setNegativeButton("Cancel",null).create();
+        d.setOnShowListener(v -> d.getButton(-1).setOnClickListener(w -> { String n=name.getText().toString().trim(); if(!n.isEmpty())script.name=n; script.code=code.getText().toString(); for(int i=0;i<COUNT;i++)script.playerTargets[i]=targets[i].isChecked(); saveUserScripts(); d.dismiss(); showScriptsManager(); }));
+        d.show(); styleDialog(d); if(d.getWindow()!=null)d.getWindow().setLayout((int)(getResources().getDisplayMetrics().widthPixels*.94f),(int)(getResources().getDisplayMetrics().heightPixels*.86f));
+    }
+
+    private void showSidebarSettings() {
+        LinearLayout box=dialogLayout(); box.addView(heading("Sidebar & Layout"));
+        box.addView(description("Keep only the controls you use. Changes are saved automatically."));
+        SeekBar opacity=new SeekBar(this); opacity.setMax(100); opacity.setProgress(panelOpacity); box.addView(description("Sidebar opacity: " + panelOpacity + "%")); box.addView(opacity);
+        SeekBar width=new SeekBar(this); width.setMax(120); width.setProgress(Math.max(30,panelWidthDp)-30); box.addView(description("Panel width: " + panelWidthDp + " dp")); box.addView(width);
+        String[] features={"Home","Reload","Awake","Auto Play","Join Room","Players","Scripts","Analytics","Theme Studio","Backup / Restore"};
+        box.addView(description("Feature visibility is available here; the core navigation controls remain accessible."));
+        CheckBox compact=check("Compact sidebar buttons",prefs.getBoolean("compactSidebar",false)); box.addView(compact);
+        CheckBox showAnalytics=check("Show Analytics button",prefs.getBoolean("showAnalytics",true)); box.addView(showAnalytics);
+        CheckBox showThemes=check("Show Theme Studio button",prefs.getBoolean("showThemes",true)); box.addView(showThemes);
+        CheckBox showBackup=check("Show Backup / Restore button",prefs.getBoolean("showBackup",true)); box.addView(showBackup);
+        opacity.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){public void onProgressChanged(SeekBar b,int v,boolean u){panelOpacity=Math.max(35,v); if(panel!=null)panel.setAlpha(panelOpen?panelOpacity/100f:0.25f);} public void onStartTrackingTouch(SeekBar b){} public void onStopTrackingTouch(SeekBar b){}});
+        width.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){public void onProgressChanged(SeekBar b,int v,boolean u){panelWidthDp=v+30;} public void onStartTrackingTouch(SeekBar b){} public void onStopTrackingTouch(SeekBar b){}});
+        AlertDialog d=new AlertDialog.Builder(this).setView(box).setPositiveButton("Save",null).setNegativeButton("Cancel",null).create(); d.setOnShowListener(v->d.getButton(-1).setOnClickListener(w->{prefs.edit().putBoolean("compactSidebar",compact.isChecked()).putBoolean("showAnalytics",showAnalytics.isChecked()).putBoolean("showThemes",showThemes.isChecked()).putBoolean("showBackup",showBackup.isChecked()).apply(); savePreferences(); if(panel!=null){panel.setAlpha(panelOpacity/100f); panel.setVisibility(panelOpen?View.VISIBLE:View.GONE);} d.dismiss(); Toast.makeText(this,"Sidebar settings saved. Reopen app to apply button visibility.",Toast.LENGTH_SHORT).show();})); d.show(); styleDialog(d);
+    }
+
+    private void showThemeStudio() {
+        LinearLayout box=dialogLayout(); box.addView(heading("Theme Studio"));
+        String[] labels={"Violet","Blue","Red","Mint","Amber","Pink"}; int[] colors={Color.rgb(139,92,246),Color.rgb(59,130,246),Color.rgb(239,68,68),Color.rgb(16,185,129),Color.rgb(245,158,11),Color.rgb(236,72,153)};
+        RadioGroup group=new RadioGroup(this); group.setOrientation(RadioGroup.VERTICAL); int chosen=0; for(int i=0;i<labels.length;i++){RadioButton rb=new RadioButton(this); rb.setText("●  "+labels[i]); rb.setTextColor(colors[i]); rb.setId(100+i); group.addView(rb); if(colors[i]==themeAccent)chosen=i;} group.check(100+chosen); box.addView(group);
+        EditText hex=new EditText(this); hex.setSingleLine(true); hex.setHint("Custom color, e.g. #8B5CF6"); hex.setTextColor(Color.WHITE); hex.setBackground(inputBackground()); box.addView(hex);
+        AlertDialog d=new AlertDialog.Builder(this).setView(box).setPositiveButton("Apply theme",null).setNegativeButton("Cancel",null).create(); d.setOnShowListener(v->d.getButton(-1).setOnClickListener(w->{int id=group.getCheckedRadioButtonId(); themeAccent=colors[Math.max(0,Math.min(colors.length-1,id-100))]; themeName=labels[Math.max(0,Math.min(labels.length-1,id-100))]; String h=hex.getText().toString().trim(); try{if(!h.isEmpty()){themeAccent=Color.parseColor(h);themeName="Custom";}}catch(Exception ex){hex.setError("Use a valid color such as #8B5CF6");return;} PURPLE=themeAccent; prefs.edit().putInt("themeAccent",themeAccent).putString("themeName",themeName).apply(); savePreferences(); d.dismiss(); Toast.makeText(this,"Theme applied to new controls. Restart to refresh all colors.",Toast.LENGTH_SHORT).show();})); d.show(); styleDialog(d);
+    }
+
+    private void showBackupDialog() {
+        new AlertDialog.Builder(this).setTitle("Backup & Restore").setMessage("Export all settings and userscripts to a JSON file, or restore a previous backup. Keep a backup before changing scripts or themes.")
+            .setPositiveButton("Export backup",(d,w)->{Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);i.addCategory(Intent.CATEGORY_OPENABLE);i.setType("application/json");i.putExtra(Intent.EXTRA_TITLE,"richup-bodz-backup.json");startActivityForResult(i,REQ_BACKUP_EXPORT);})
+            .setNegativeButton("Restore backup",(d,w)->{Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.addCategory(Intent.CATEGORY_OPENABLE);i.setType("application/json");startActivityForResult(i,REQ_BACKUP_IMPORT);})
+            .setNeutralButton("Cancel",null).show();
+    }
+
+    @Override protected void onActivityResult(int requestCode,int resultCode,Intent data) {
+        super.onActivityResult(requestCode,resultCode,data); if(resultCode!=RESULT_OK||data==null||data.getData()==null)return; Uri uri=data.getData();
+        try {
+            if(requestCode==REQ_IMPORT_SCRIPT){String code=readUri(uri);String name=extractScriptName(code,"Imported script "+(userScripts.size()+1));userScripts.add(new UserScript(name,code,"import:"+System.currentTimeMillis(),false));saveUserScripts();showScriptsManager();Toast.makeText(this,"Script imported (OFF by default)",Toast.LENGTH_SHORT).show();}
+            else if(requestCode==REQ_EXPORT_SCRIPT && pendingExportScript>=0 && pendingExportScript<userScripts.size()){writeUri(uri,userScripts.get(pendingExportScript).code);Toast.makeText(this,"Script exported",Toast.LENGTH_SHORT).show();}
+            else if(requestCode==REQ_BACKUP_EXPORT){JSONObject root=new JSONObject();root.put("version",2);JSONObject settings=new JSONObject();for(java.util.Map.Entry<String,?> entry:prefs.getAll().entrySet())settings.put(entry.getKey(),entry.getValue());root.put("preferences",settings);root.put("scripts",new JSONArray(prefs.getString("userScripts","[]")));writeUri(uri,root.toString(2));Toast.makeText(this,"Backup exported",Toast.LENGTH_SHORT).show();}
+            else if(requestCode==REQ_BACKUP_IMPORT){JSONObject root=new JSONObject(readUri(uri));JSONArray arr=root.optJSONArray("scripts");SharedPreferences.Editor edit=prefs.edit();if(arr!=null)edit.putString("userScripts",arr.toString());JSONObject settings=root.optJSONObject("preferences");if(settings!=null){java.util.Iterator<String> keys=settings.keys();while(keys.hasNext()){String key=keys.next();Object value=settings.opt(key);if(value instanceof Boolean)edit.putBoolean(key,(Boolean)value);else if(value instanceof Integer)edit.putInt(key,(Integer)value);else if(value instanceof Long)edit.putLong(key,(Long)value);else if(value instanceof String)edit.putString(key,(String)value);else if(value instanceof Double)edit.putFloat(key,((Double)value).floatValue());}}edit.apply();loadUserScripts();loadPreferences();Toast.makeText(this,"Backup restored. Restart the app to apply all settings.",Toast.LENGTH_LONG).show();}
+        } catch(Exception e){Toast.makeText(this,"File operation failed: "+e.getMessage(),Toast.LENGTH_LONG).show();}
+    }
+    private String readUri(Uri uri) throws Exception {StringBuilder b=new StringBuilder();try(BufferedReader r=new BufferedReader(new InputStreamReader(getContentResolver().openInputStream(uri),StandardCharsets.UTF_8))){String line;while((line=r.readLine())!=null)b.append(line).append('\n');}return b.toString();}
+    private void writeUri(Uri uri,String value) throws Exception {try(OutputStream out=getContentResolver().openOutputStream(uri)){if(out==null)throw new Exception("Cannot open file");out.write(value.getBytes(StandardCharsets.UTF_8));}}
 
     private void showAnalyticsDialog() {
         analyticsOpen = true;
@@ -953,7 +1066,8 @@ public class MainActivity extends Activity {
 
     private void showPlayerSettings() {
         LinearLayout layout = dialogLayout();
-        layout.addView(heading("Player Names & Colors"));
+        layout.addView(heading("Player Profiles"));
+        layout.addView(description("Each tab keeps its own room, color, visibility, and automation settings."));
 
         EditText[] inputs = new EditText[COUNT];
         TextView[] colors = new TextView[COUNT];
@@ -1124,6 +1238,11 @@ public class MainActivity extends Activity {
 
     private void loadPreferences() {
         keepAwake = prefs.getBoolean("keepAwake", true);
+        panelOpen = false;
+        panelOpacity = prefs.getInt("panelOpacity", 92);
+        panelWidthDp = prefs.getInt("panelWidthDp", 150);
+        themeAccent = prefs.getInt("themeAccent", Color.rgb(139, 92, 246));
+        themeName = prefs.getString("themeName", "Violet");
 
         for (int i = 0; i < COUNT; i++) {
             names[i] = prefs.getString("name" + i, names[i]);
@@ -1140,6 +1259,7 @@ public class MainActivity extends Activity {
     private void savePreferences() {
         SharedPreferences.Editor e = prefs.edit();
         e.putBoolean("keepAwake", keepAwake);
+        e.putBoolean("panelOpen", panelOpen); e.putInt("panelOpacity", panelOpacity); e.putInt("panelWidthDp", panelWidthDp); e.putInt("themeAccent", themeAccent); e.putString("themeName", themeName);
 
         for (int i = 0; i < COUNT; i++) {
             e.putString("name" + i, names[i]);
